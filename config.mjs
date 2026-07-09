@@ -7,13 +7,10 @@ export const config = {
   allowedHostPattern:
     /^https:\/\/[a-z0-9-]+--da-express-milo--adobecom\.aem\.(live|page)\//i,
 
-  // 2. SELECTORS — CSS selectors for the elements to validate.
-  //    IMPORTANT: pin these to your actual PDP block markup. The values below
-  //    are generic fallbacks and may match too much or too little on your pages.
+  // 2. SELECTORS — exact PDP element IDs carried by the rendered markup.
   selectors: {
-    h1: "h1",
-    hero:
-      '.marquee picture img, .hero picture img, [class*="hero"] picture img, [class*="hero"] img',
+    h1: "#pdpx-product-title",
+    hero: "#pdpx-product-hero-image",
   },
 
   // Timeouts (ms). Give the client-side Zazzle call room to return.

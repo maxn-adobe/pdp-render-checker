@@ -1,0 +1,39 @@
+name: PDP Render Check
+
+on:
+  # 1. Manual run from the Actions tab (this is your "dashboard").
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: "URLs (one per line or comma-separated). Blank = use urls.txt."
+        required: false
+        type: string
+  # 2. API trigger (repository_dispatch) so the DA tool can call it.
+  #    Send client_payload.urls = JSON array of URL strings.
+  repository_dispatch:
+    types: [pdp-check]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Run PDP render check
+        env:
+          # Manual run: newline- or comma-separated string
+          CHECK_URLS: ${{ github.event.inputs.urls }}
+          # API run: client_payload.urls -> JSON array of strings
+          CHECK_URLS_JSON: ${{ toJSON(github.event.client_payload.urls) }}
+        run: npm run check

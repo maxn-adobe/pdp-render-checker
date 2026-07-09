@@ -8,18 +8,19 @@ validated upstream before page generation).
 
 ## What it checks, per page
 
-- H1: present, non-empty, visible, and (if an expected title is supplied) matches.
+- H1: present, non-empty, visible.
 - Hero image: present, has a src, actually decoded (naturalWidth > 0, so 404s and
-  lazy-load failures fail), visible, and (if an expected URL is supplied) matches.
+  lazy-load failures fail), visible.
 - A page that never populates within the timeout fails (that is the bug we hunt).
+- Checks against every URL in one run, in parallel (bounded concurrency).
 
 ## Running it
 
 Three ways to trigger, all via the one workflow (`.github/workflows/pdp-check.yml`):
 
-1. Actions tab -> "PDP Render Check" -> Run workflow -> paste a URL (+ optional
-   expected title / hero substring).
-2. CLI: `gh workflow run pdp-check.yml -f url="https://..." -f expected_title="..."`
+1. Actions tab -> "PDP Render Check" -> Run workflow -> paste one or more URLs
+   (blank uses the committed `urls.txt`).
+2. CLI: `gh workflow run pdp-check.yml -f urls="https://.../a,https://.../b"`
 3. API (for the DA tool):
 
    ```bash
@@ -27,9 +28,9 @@ Three ways to trigger, all via the one workflow (`.github/workflows/pdp-check.ym
      -H "Authorization: Bearer $GITHUB_TOKEN" \
      -H "Accept: application/vnd.github+json" \
      https://api.github.com/repos/<owner>/pdp-render-checker/dispatches \
-     -d '{"event_type":"pdp-check","client_payload":{"targets":[
-          {"url":"https://main--da-express-milo--adobecom.aem.live/<path>",
-           "expected":{"title":"Custom Photo Mug","heroImageUrl":"https://rlv.zcache.com/..."}}
+     -d '{"event_type":"pdp-check","client_payload":{"urls":[
+          "https://main--da-express-milo--adobecom.aem.live/<path-1>",
+          "https://main--da-express-milo--adobecom.aem.live/<path-2>"
         ]}}'
    ```
 
@@ -41,8 +42,12 @@ run exits non-zero (red) if any page fails.
 ```bash
 npm install
 npx playwright install --with-deps chromium
-CHECK_URL="https://main--da-express-milo--adobecom.aem.live/<path>" \
-  EXPECTED_TITLE="Custom Photo Mug" npm run check
+
+# single or comma/newline-separated list
+CHECK_URLS="https://main--da-express-milo--adobecom.aem.live/<path>" npm run check
+
+# or just run against the committed urls.txt
+npm run check
 ```
 
 ## Tuning
