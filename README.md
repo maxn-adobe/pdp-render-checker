@@ -14,14 +14,30 @@ validated upstream before page generation).
 - A page that never populates within the timeout fails (that is the bug we hunt).
 - Checks against every URL in one run, in parallel (bounded concurrency).
 
+Accepted URL formats: the staging `https://<branch>--da-express-milo--adobecom.aem.(live|page)/...`
+domain, and the production `https://www.adobe.com/express/...` domain (same
+EDS-served content). See `allowedHostPattern` in `config.mjs`.
+
 ## Running it
 
 Three ways to trigger, all via the one workflow (`.github/workflows/pdp-check.yml`):
 
-1. Actions tab -> "PDP Render Check" -> Run workflow -> paste one or more URLs
-   (blank uses the committed `urls.txt`).
-2. CLI: `gh workflow run pdp-check.yml -f urls="https://.../a,https://.../b"`
-3. API (for the DA tool):
+1. **Actions tab** -> "PDP Render Check" -> Run workflow. Inputs:
+   - `urls` — paste a handful of URLs (one per line or comma-separated).
+     **Reserve this for a small ad hoc list** — GitHub's manual-run form only
+     offers a single-line text box (no textarea/file upload; that's a GitHub
+     platform limitation, not something this tool controls), so it's painful to
+     review or paste hundreds of URLs into.
+   - `urls_file` — path to a URL list already committed to the repo (e.g.
+     `urls_2.txt`). Use this for any list you want versioned and reviewable via
+     `git diff`. Ignored if `urls` is filled in. Blank uses `urls.txt`.
+   - `concurrency` — advanced override of page concurrency (see Tuning below).
+2. **CLI**, for one-off large batches that aren't committed to the repo — the
+   CLI passes the full multi-line value with no textbox limit:
+   ```bash
+   gh workflow run pdp-check.yml -f urls="$(cat myfile.txt)"
+   ```
+3. **API** (for the DA tool):
 
    ```bash
    curl -X POST \
@@ -34,8 +50,10 @@ Three ways to trigger, all via the one workflow (`.github/workflows/pdp-check.ym
         ]}}'
    ```
 
-Results appear in the run's job summary (a pass/fail table plus full JSON). The
-run exits non-zero (red) if any page fails.
+Results appear in the run's job summary (a pass/fail table plus full JSON),
+**written incrementally as each URL finishes** — so even if a run is killed by
+the job timeout partway through, the summary already shows every URL checked so
+far, not nothing. The run exits non-zero (red) if any page fails.
 
 ## Local run
 
@@ -46,6 +64,9 @@ npx playwright install --with-deps chromium
 # single or comma/newline-separated list
 CHECK_URLS="https://main--da-express-milo--adobecom.aem.live/<path>" npm run check
 
+# a specific committed file
+URLS_FILE=urls_2.txt npm run check
+
 # or just run against the committed urls.txt
 npm run check
 ```
@@ -54,5 +75,37 @@ npm run check
 
 Edit `config.mjs`:
 - `selectors` — pin the H1 and hero selectors to your actual PDP block markup.
-- `allowedHostPattern` — adjust if your branch/repo/owner differ.
+- `allowedHostPattern` — adjust if your branch/repo/owner/production domain differ.
 - `timeouts` — raise if pages are slow to populate.
+
+Other knobs (env vars / matching `workflow_dispatch` inputs):
+- `CONCURRENCY` (default **3**) — pages checked in parallel.
+- `RECYCLE_EVERY` (default **40**) — the browser is closed and relaunched every
+  N URLs, as cheap insurance against unbounded memory/handle growth in one
+  long-lived Chromium process on very large batches.
+
+## Known limitations of local testing
+
+While tuning the volume/timeout behavior, a real ~300-URL local test run showed
+a sharp failure spike starting partway through the batch (roughly 0% failures
+in the first ~50 URLs, then 30-50% for the remainder) — initially suspected to
+be concurrency contention or browser-process degradation. Neither explanation
+held up under further testing: recycling the browser mid-run didn't change the
+pattern, and the *same* spike appeared even fully serially (`CONCURRENCY=1`,
+one page at a time, no parallelism at all). Retrying individual "failed" URLs
+in isolation afterward, most succeeded immediately — confirming they were
+transient, not real page bugs. A few also reproduced `net::ERR_HTTP2_PROTOCOL_ERROR`
+on both `aem.live` and `www.adobe.com`, even though plain `curl` reached both
+reliably every time.
+
+Taken together, this points to a networking limitation specific to the sandbox
+this tool was developed in (something about sustained/high-volume HTTP/2
+connections from that environment), not a bug in the checker's logic and not
+necessarily representative of GitHub's hosted runners, which have a different
+(and normally more capable) network path. **Treat the `CONCURRENCY`/`RECYCLE_EVERY`
+defaults as a reasonable starting point, not a fully CI-validated tuning** —
+confirm real pass rates and timing against an actual GitHub Actions run on your
+full URL list before relying on them for large batches, and if a similar
+failure spike shows up there, it's worth checking whether the origin
+(Fastly/AEM Edge Delivery) is rate-limiting sustained request volume from the
+runner's IP, rather than re-tuning `CONCURRENCY` further.

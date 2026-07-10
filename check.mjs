@@ -2,13 +2,16 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import { config } from "./config.mjs";
 
-// Parallel page checks. Tune for runner memory; ~5 is safe on GitHub runners.
-const CONCURRENCY = Number(process.env.CONCURRENCY || 5);
+// Parallel page checks. Measured locally: concurrency 3 is reliable (0 spurious
+// failures, ~2.3x faster than serial); 4-5 caused real content-never-injected
+// failures under contention, not just slowness. Re-validate if raising this.
+const CONCURRENCY = Number(process.env.CONCURRENCY || 3);
 
 // URLs to check, in precedence order:
 //   1. CHECK_URLS       (manual run: newline- or comma-separated string)
 //   2. CHECK_URLS_JSON  (API run: JSON array of strings from client_payload.urls)
-//   3. urls.txt         (committed list; one URL per line; # = comment)
+//   3. URLS_FILE        (manual run: named committed file, e.g. "urls_2.txt")
+//   4. urls.txt         (default committed list; one URL per line; # = comment)
 function loadUrls() {
   const out = [];
   if (process.env.CHECK_URLS && process.env.CHECK_URLS.trim()) {
@@ -21,12 +24,17 @@ function loadUrls() {
       throw new Error(`CHECK_URLS_JSON is not valid JSON: ${e.message}`);
     }
     if (Array.isArray(arr)) out.push(...arr);
-  } else if (fs.existsSync("urls.txt")) {
-    out.push(...fs.readFileSync("urls.txt", "utf8").split("\n"));
+  } else {
+    const file = (process.env.URLS_FILE && process.env.URLS_FILE.trim()) || "urls.txt";
+    if (fs.existsSync(file)) out.push(...fs.readFileSync(file, "utf8").split("\n"));
   }
-  const urls = out.map((u) => u.trim()).filter((u) => u && !u.startsWith("#"));
+  // Trailing commas are a common copy/paste artifact (e.g. a file with one
+  // "url()," per line) — strip them so they don't end up appended to the URL.
+  const urls = out
+    .map((u) => u.trim().replace(/,+$/, "").trim())
+    .filter((u) => u && !u.startsWith("#"));
   if (!urls.length) {
-    throw new Error("No URLs. Provide CHECK_URLS, client_payload.urls, or urls.txt.");
+    throw new Error("No URLs. Provide CHECK_URLS, client_payload.urls, URLS_FILE, or urls.txt.");
   }
   return [...new Set(urls)];
 }
@@ -108,36 +116,42 @@ async function checkPage(browser, url) {
   return result;
 }
 
-async function runAll(browser, urls) {
-  const results = [];
-  for (let i = 0; i < urls.length; i += CONCURRENCY) {
-    const chunk = urls.slice(i, i + CONCURRENCY);
-    results.push(...(await Promise.all(chunk.map((u) => checkPage(browser, u)))));
-  }
-  return results;
-}
-
 const mark = (b) => (b ? "✓" : "✗"); // check / cross
 
-function writeSummary(results) {
+function summaryRow(r) {
+  const h1 = r.checks.h1 || {};
+  const hero = r.checks.hero || {};
+  const status = r.ok ? "✅ PASS" : "❌ FAIL";
+  const h1ok = h1.present && h1.visible && h1.nonEmpty;
+  const heroOk = hero.present && hero.visible && hero.decoded;
+  const notes = r.errors.length ? r.errors.join(", ") : "";
+  return `| ${status} | ${r.url} | ${mark(h1ok)} | ${mark(heroOk)} | ${notes} |`;
+}
+
+// Written incrementally (one row per completed URL, flushed synchronously) so
+// that a killed/timed-out run still leaves a partial summary instead of none.
+function startSummary() {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (!path) return;
+  fs.appendFileSync(
+    path,
+    [`## PDP render check`, ``, `| Result | URL | H1 | Hero | Notes |`, `|---|---|:--:|:--:|---|`, ``].join("\n")
+  );
+}
+
+function appendSummaryRow(r) {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (!path) return;
+  fs.appendFileSync(path, summaryRow(r) + "\n");
+}
+
+function finishSummary(results) {
   const path = process.env.GITHUB_STEP_SUMMARY;
   if (!path) return;
   const passed = results.filter((r) => r.ok).length;
-  const rows = results.map((r) => {
-    const h1 = r.checks.h1 || {};
-    const hero = r.checks.hero || {};
-    const status = r.ok ? "✅ PASS" : "❌ FAIL";
-    const h1ok = h1.present && h1.visible && h1.nonEmpty;
-    const heroOk = hero.present && hero.visible && hero.decoded;
-    const notes = r.errors.length ? r.errors.join(", ") : "";
-    return `| ${status} | ${r.url} | ${mark(h1ok)} | ${mark(heroOk)} | ${notes} |`;
-  });
   const md = [
-    `## PDP render check — ${passed}/${results.length} passed`,
     ``,
-    `| Result | URL | H1 | Hero | Notes |`,
-    `|---|---|:--:|:--:|---|`,
-    ...rows,
+    `**${passed}/${results.length} passed**`,
     ``,
     `<details><summary>Full JSON</summary>`,
     ``,
@@ -151,15 +165,51 @@ function writeSummary(results) {
   fs.appendFileSync(path, md);
 }
 
+// Periodically recycle the browser on long batches — cheap insurance against
+// unbounded memory/handle growth in a single long-lived Chromium process.
+// (Note: a locally-observed failure spike partway through a 298-URL batch
+// persisted even with recycling and even at CONCURRENCY=1, so that specific
+// pattern was network-environment noise, not something this alone fixes — see
+// README "Known limitations of local testing".)
+const RECYCLE_EVERY = Number(process.env.RECYCLE_EVERY || 40);
+
+async function runAll(urls) {
+  const total = urls.length;
+  let done = 0;
+  let sinceRecycle = 0;
+  let browser = await chromium.launch();
+  const results = [];
+  try {
+    for (let i = 0; i < urls.length; i += CONCURRENCY) {
+      const chunk = urls.slice(i, i + CONCURRENCY);
+      const chunkResults = await Promise.all(
+        chunk.map((u) =>
+          checkPage(browser, u).then((r) => {
+            done += 1;
+            console.log(`[${done}/${total}] ${mark(r.ok)} ${r.url}`);
+            appendSummaryRow(r);
+            return r;
+          })
+        )
+      );
+      results.push(...chunkResults);
+      sinceRecycle += chunk.length;
+      if (sinceRecycle >= RECYCLE_EVERY && done < total) {
+        await browser.close();
+        browser = await chromium.launch();
+        sinceRecycle = 0;
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  return results;
+}
+
 // ---- main ----
 const urls = loadUrls();
-const browser = await chromium.launch();
-let results = [];
-try {
-  results = await runAll(browser, urls);
-} finally {
-  await browser.close();
-}
-writeSummary(results);
+startSummary();
+const results = await runAll(urls);
+finishSummary(results);
 console.log(JSON.stringify(results, null, 2));
 process.exit(results.every((r) => r.ok) ? 0 : 1);

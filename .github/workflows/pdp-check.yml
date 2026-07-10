@@ -5,7 +5,15 @@ on:
   workflow_dispatch:
     inputs:
       urls:
-        description: "URLs (one per line or comma-separated). Blank = use urls.txt."
+        description: "URLs (one per line or comma-separated). For a handful of ad hoc URLs only — blank = use urls_file/urls.txt. For big pastes, use the CLI instead (see README)."
+        required: false
+        type: string
+      urls_file:
+        description: "Path to a committed URL list file (e.g. urls_2.txt). Ignored if 'urls' above is filled in. Blank = urls.txt."
+        required: false
+        type: string
+      concurrency:
+        description: "Advanced: override page concurrency (default 3)."
         required: false
         type: string
   # 2. API trigger (repository_dispatch) so the DA tool can call it.
@@ -16,7 +24,7 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -36,4 +44,6 @@ jobs:
           CHECK_URLS: ${{ github.event.inputs.urls }}
           # API run: client_payload.urls -> JSON array of strings
           CHECK_URLS_JSON: ${{ toJSON(github.event.client_payload.urls) }}
+          URLS_FILE: ${{ github.event.inputs.urls_file }}
+          CONCURRENCY: ${{ github.event.inputs.concurrency }}
         run: npm run check
