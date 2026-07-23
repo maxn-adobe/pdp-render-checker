@@ -76,5 +76,15 @@ export function verdicts(r) {
     photos: !!(c.photos && c.photos.present && c.photos.total > 0 && c.photos.decoded === c.photos.total),
     // Generic no-error: any block present must not be broken (empty/failed).
     blocks: !!(c.blocks && (c.blocks.broken || []).length === 0),
+    meta: !!(
+      c.meta &&
+      c.meta.hasDescription &&
+      c.meta.descriptionOk &&
+      c.meta.hasCanonical &&
+      c.meta.hasOgTitle &&
+      c.meta.hasOgImage
+    ),
+    mobile: !!(c.mobile && c.mobile.noOverflow && c.mobile.elementsOk),
+    altText: !!(c.altText && c.altText.total > 0 && c.altText.missing === 0),
   };
 }

@@ -256,6 +256,71 @@ async function checkPage(browser, url) {
       return { total: els.length, broken: broken.slice(0, 10) };
     });
 
+    // ---- Meta tags ----
+    // The description should be a real sentence, not the short spec title (the
+    // known regression). The short title isn't in the DOM, so a length floor is
+    // the proxy. Also require canonical + core social tags.
+    const metaInfo = await page.evaluate(() => {
+      const get = (s, a = "content") => {
+        const el = document.querySelector(s);
+        return el ? el.getAttribute(a) : null;
+      };
+      return {
+        description: get('meta[name="description"]'),
+        canonical: get('link[rel="canonical"]', "href"),
+        ogTitle: get('meta[property="og:title"]'),
+        ogImage: get('meta[property="og:image"]'),
+      };
+    });
+    const metaDesc = (metaInfo.description || "").trim();
+    result.checks.meta = {
+      hasDescription: metaDesc.length > 0,
+      descriptionOk:
+        metaDesc.length >= config.meta.descriptionMinLength &&
+        metaDesc !== h1Text &&
+        findPlaceholders([metaDesc]).length === 0,
+      hasCanonical: !!(metaInfo.canonical && metaInfo.canonical.trim()),
+      hasOgTitle: !!(metaInfo.ogTitle && metaInfo.ogTitle.trim()),
+      hasOgImage: !!(metaInfo.ogImage && metaInfo.ogImage.trim()),
+    };
+
+    // ---- Image alt text (meaningful product images only) ----
+    result.checks.altText = await page.evaluate((sel) => {
+      const imgs = [...document.querySelectorAll(sel.altImages)];
+      const missing = imgs.filter((i) => !(i.getAttribute("alt") || "").trim());
+      return {
+        total: imgs.length,
+        missing: missing.length,
+        missingSrcs: missing.map((i) => i.getAttribute("src") || "(image)").slice(0, 5),
+      };
+    }, config.selectors);
+
+    // ---- Mobile layout (MUST run last — it resizes the viewport) ----
+    await page.setViewportSize({ width: config.mobile.width, height: config.mobile.height });
+    await page.waitForTimeout(config.timeouts.mobileReflowMs);
+    result.checks.mobile = await page.evaluate(
+      (cfg) => {
+        const de = document.documentElement;
+        const overflowPx = de.scrollWidth - de.clientWidth;
+        const missing = [];
+        cfg.core.forEach((s) => {
+          const el = document.querySelector(s);
+          const r = el && el.getBoundingClientRect();
+          if (!(el && r && r.width > 0 && r.height > 0)) missing.push(s);
+        });
+        return {
+          overflowPx,
+          noOverflow: overflowPx <= cfg.tol,
+          elementsOk: missing.length === 0,
+          missing,
+        };
+      },
+      {
+        tol: config.mobile.overflowTolerancePx,
+        core: [config.selectors.h1, config.selectors.hero, config.selectors.price],
+      }
+    );
+
     // ---- Verdict ----
     const v = verdicts(result);
     result.ok =
@@ -268,6 +333,9 @@ async function checkPage(browser, url) {
       v.noJunk &&
       v.photos &&
       v.blocks &&
+      v.meta &&
+      v.mobile &&
+      v.altText &&
       result.errors.length === 0;
   } catch (e) {
     result.errors.push(`render-failed: ${e.message}`);
@@ -299,7 +367,28 @@ function summaryRow(r) {
   if (!v.blocks && c.blocks?.broken?.length) {
     notes.push(`blocks: ${c.blocks.broken.join(" ")}`);
   }
-  const cells = [v.h1, v.hero, v.price, v.buy, v.placeholders, v.options, v.noJunk, v.photos, v.blocks];
+  if (!v.meta && c.meta) {
+    const reasons = [];
+    if (!c.meta.hasDescription) reasons.push("no-desc");
+    else if (!c.meta.descriptionOk) reasons.push("desc-short/dup");
+    if (!c.meta.hasCanonical) reasons.push("no-canonical");
+    if (!c.meta.hasOgTitle) reasons.push("no-og:title");
+    if (!c.meta.hasOgImage) reasons.push("no-og:image");
+    notes.push(`meta: ${reasons.join("/")}`);
+  }
+  if (!v.mobile && c.mobile) {
+    const bits = [];
+    if (!c.mobile.noOverflow) bits.push(`overflow ${c.mobile.overflowPx}px`);
+    if (c.mobile.missing?.length) bits.push(`missing ${c.mobile.missing.join(",")}`);
+    notes.push(`mobile: ${bits.join(" ")}`);
+  }
+  if (!v.altText && c.altText) {
+    notes.push(`alt missing: ${c.altText.missing}`);
+  }
+  const cells = [
+    v.h1, v.hero, v.price, v.buy, v.placeholders, v.options,
+    v.noJunk, v.photos, v.blocks, v.meta, v.mobile, v.altText,
+  ];
   return `| ${status} | ${r.url} | ${cells.map(mark).join(" | ")} | ${notes.join(", ")} |`;
 }
 
@@ -313,8 +402,8 @@ function startSummary() {
     [
       `## PDP render check`,
       ``,
-      `| Result | URL | H1 | Hero | Price | Buy | {{ }} | Options | Junk | Images | Blocks | Notes |`,
-      `|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|`,
+      `| Result | URL | H1 | Hero | Price | Buy | {{ }} | Options | Junk | Images | Blocks | Meta | Mobile | Alt | Notes |`,
+      `|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|`,
       ``,
     ].join("\n")
   );

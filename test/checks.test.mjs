@@ -97,6 +97,9 @@ function passingResult() {
       noJunk: { clean: true, samples: [] },
       photos: { present: true, total: 7, decoded: 7, undecoded: [] },
       blocks: { total: 0, broken: [] },
+      meta: { hasDescription: true, descriptionOk: true, hasCanonical: true, hasOgTitle: true, hasOgImage: true },
+      mobile: { overflowPx: 0, noOverflow: true, elementsOk: true, missing: [] },
+      altText: { total: 7, missing: 0, missingSrcs: [] },
     },
   };
 }
@@ -105,6 +108,7 @@ test("verdicts: a fully-passing result is all true", () => {
   assert.deepEqual(verdicts(passingResult()), {
     h1: true, hero: true, price: true, buy: true, placeholders: true,
     options: true, noJunk: true, photos: true, blocks: true,
+    meta: true, mobile: true, altText: true,
   });
 });
 
@@ -153,10 +157,41 @@ test("verdicts: a broken block fails blocks", () => {
   assert.equal(verdicts(r).blocks, false);
 });
 
+test("verdicts: missing canonical fails meta", () => {
+  const r = passingResult();
+  r.checks.meta.hasCanonical = false;
+  assert.equal(verdicts(r).meta, false);
+});
+
+test("verdicts: a short/duplicated meta description fails meta", () => {
+  const r = passingResult();
+  r.checks.meta.descriptionOk = false;
+  assert.equal(verdicts(r).meta, false);
+});
+
+test("verdicts: horizontal overflow fails mobile", () => {
+  const r = passingResult();
+  r.checks.mobile = { overflowPx: 40, noOverflow: false, elementsOk: true, missing: [] };
+  assert.equal(verdicts(r).mobile, false);
+});
+
+test("verdicts: a missing element at mobile width fails mobile", () => {
+  const r = passingResult();
+  r.checks.mobile = { overflowPx: 0, noOverflow: true, elementsOk: false, missing: ["#pdpx-price-label"] };
+  assert.equal(verdicts(r).mobile, false);
+});
+
+test("verdicts: a product image without alt fails altText", () => {
+  const r = passingResult();
+  r.checks.altText = { total: 7, missing: 1, missingSrcs: ["x.png"] };
+  assert.equal(verdicts(r).altText, false);
+});
+
 test("verdicts: missing checks degrade safely (options skips when absent)", () => {
   const empty = {
     h1: false, hero: false, price: false, buy: false, placeholders: false,
     options: true, noJunk: false, photos: false, blocks: false,
+    meta: false, mobile: false, altText: false,
   };
   assert.deepEqual(verdicts({ checks: {} }), empty);
   assert.deepEqual(verdicts({}), empty);

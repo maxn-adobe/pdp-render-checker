@@ -32,6 +32,13 @@ validated upstream before page generation).
 - All blocks render: any Milo block present on the page is non-empty and not in a
   failed/loading state. (Generic no-error check — it catches a broken block but
   not a wholly-absent expected one, as there is no per-product-type block manifest.)
+- Meta tags: a non-empty, substantial meta description (a length floor guards
+  against the known "description = short spec title" regression), plus a canonical
+  link and og:title / og:image social tags.
+- Mobile layout: at phone width the page has no horizontal overflow and the title,
+  hero, and price are still present.
+- Image alt text: the hero and thumbnail product images have non-empty alt
+  (decorative images, which correctly use an empty alt, are excluded).
 - A page that never populates within the timeout fails (that is the bug we hunt).
 - Checks against every URL in one run, in parallel (bounded concurrency).
 
@@ -106,15 +113,18 @@ npm test
 
 Edit `config.mjs`:
 - `selectors` — pin the title, hero, price, buy-button, product-container,
-  options-container, and images-container selectors to your actual PDP markup.
+  options-container, images-container, and alt-images selectors to your PDP markup.
 - `patterns` — the currency, Express-template-URL, and `{{ }}` placeholder
   regexes used by the price / buy-link / placeholder checks.
 - `junk` — the leaked-token list (`none`/`null`/`undefined`/`n/a`) and the
   exact-cased `allow` list of legitimate labels (e.g. the "None" option).
+- `meta` — `descriptionMinLength`, the length floor that stands in for the
+  short-title regression (the short title isn't in the rendered DOM).
+- `mobile` — the phone-viewport `width`/`height` and `overflowTolerancePx`.
 - `allowedHostPattern` — adjust if your branch/repo/owner/production domain differ.
 - `timeouts` — raise if pages are slow to populate (`buyLinkMs` waits for the buy
-  CTA href to hydrate off `#`; `imagesMs` bounds the wait for every gallery image
-  to decode).
+  CTA href to hydrate off `#`; `imagesMs` bounds the gallery-image decode wait;
+  `mobileReflowMs` is the settle time after switching to the mobile viewport).
 
 Other knobs (env vars / matching `workflow_dispatch` inputs):
 - `CONCURRENCY` (default **3**) — pages checked in parallel.
