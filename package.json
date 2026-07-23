@@ -4,7 +4,8 @@
   "private": true,
   "description": "Headless render check for Zazzle-backed AEM Edge Delivery PDPs",
   "scripts": {
-    "check": "node check.mjs"
+    "check": "node check.mjs",
+    "test": "node --test"
   },
   "devDependencies": {
     "playwright": "^1.58.0"

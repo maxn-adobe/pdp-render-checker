@@ -1,4 +1,5 @@
-// The two things you will actually tune live here.
+// The things you will actually tune live here: host allowlist, selectors,
+// value patterns, and timeouts.
 
 export const config = {
   // 1. HOST ALLOWLIST — the checker will only render URLs matching this.
@@ -13,11 +14,62 @@ export const config = {
   selectors: {
     h1: "#pdpx-product-title",
     hero: "#pdpx-product-hero-image",
+    price: "#pdpx-price-label",
+    buyButton: "#pdpx-checkout-button",
+    // Wraps the product content once hydrated; carries data-template-id.
+    productContainer: ".pdpx-global-container",
+    optionsContainer: "#pdpx-customization-inputs-container",
+    imagesContainer: "#pdpx-product-images-container",
+    // Product images that must carry alt text. Excludes decorative images, for
+    // which an empty alt is the correct, accessible choice.
+    altImages: "#pdpx-product-hero-image, .pdpx-image-thumbnail-carousel-item-image",
+  },
+
+  // 3. PATTERNS — how a rendered value is judged "real".
+  patterns: {
+    // Looks like a currency amount (locale-tolerant: "$23.15" or "23,15 €").
+    price: /[$€£¥₹]\s?\d[\d.,]*|\d[\d.,]*\s?[$€£¥₹]/,
+    // The buy CTA must be an Adobe Express editor URL; group 1 = the template
+    // URN (e.g. "urn:aaid:sc:..."). Deployed pages use the /design-remix/ route;
+    // /design/ is also accepted.
+    expressTemplateUrl: /^https:\/\/new\.express\.adobe\.com\/design(?:-remix)?\/template\/([^/?#]+)/i,
+    // An unresolved Milo authoring placeholder, e.g. {{title}}.
+    placeholder: /\{\{[^}]+\}\}/,
+  },
+
+  // 4. JUNK TOKENS — leaked internal values that must never reach a live field.
+  //    Matched case-insensitively; `allow` is an exact-cased list of real labels
+  //    that would otherwise trip the check (e.g. the legitimate "None" option).
+  junk: {
+    tokens: ["none", "null", "undefined", "n/a"],
+    allow: ["None"],
+  },
+
+  // 5. META — a healthy meta description is a full sentence, not the short spec
+  //    title (the known regression). The short title isn't in the DOM, so a
+  //    length floor is used as the proxy; adjust to taste.
+  meta: {
+    descriptionMinLength: 50,
+  },
+
+  // 6. MOBILE — viewport used to re-check element presence and confirm the page
+  //    has no horizontal overflow at phone width.
+  mobile: {
+    width: 390,
+    height: 844,
+    overflowTolerancePx: 2,
   },
 
   // Timeouts (ms). Give the client-side Zazzle call room to return.
   timeouts: {
     navigateMs: 30000,
     contentInjectedMs: 20000,
+    // Short extra wait for the buy CTA href to hydrate off its "#" placeholder.
+    buyLinkMs: 5000,
+    // Bounded wait for every gallery image (hero + thumbnails) to decode; the
+    // Zazzle rendering endpoint returns them a few seconds after injection.
+    imagesMs: 15000,
+    // Settle time after switching to the mobile viewport before measuring.
+    mobileReflowMs: 600,
   },
 };
