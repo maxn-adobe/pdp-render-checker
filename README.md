@@ -11,6 +11,16 @@ validated upstream before page generation).
 - H1: present, non-empty, visible.
 - Hero image: present, has a src, actually decoded (naturalWidth > 0, so 404s and
   lazy-load failures fail), visible.
+- Price: present, visible, non-empty, looks like a currency amount, and not
+  $0.00/blank (a zero or blank price is treated as a defect).
+- Buy link: the checkout CTA is a real Adobe Express template URL (not the
+  un-hydrated `#`) whose templateId matches the page's `data-template-id`.
+  Structural only — no network request or checkout is triggered. (The CTA points
+  at the Express editor, not Zazzle; the Zazzle product id isn't rendered into
+  the page, so it can't be validated from the DOM.)
+- No leftover `{{ }}` placeholders: the rendered text and key attributes carry no
+  unresolved Milo authoring tokens (these leak from surrounding authored blocks,
+  not the PDP island itself).
 - A page that never populates within the timeout fails (that is the bug we hunt).
 - Checks against every URL in one run, in parallel (bounded concurrency).
 
@@ -71,12 +81,26 @@ URLS_FILE=urls_2.txt npm run check
 npm run check
 ```
 
+## Tests
+
+Pure check logic — currency/price validation, Express buy-link parsing, the
+`{{ }}` placeholder scan, and verdict folding — is unit-tested with Node's
+built-in test runner (no browser or network needed):
+
+```bash
+npm test
+```
+
 ## Tuning
 
 Edit `config.mjs`:
-- `selectors` — pin the H1 and hero selectors to your actual PDP block markup.
+- `selectors` — pin the title, hero, price, buy-button, and product-container
+  selectors to your actual PDP block markup.
+- `patterns` — the currency, Express-template-URL, and `{{ }}` placeholder
+  regexes used by the price / buy-link / placeholder checks.
 - `allowedHostPattern` — adjust if your branch/repo/owner/production domain differ.
-- `timeouts` — raise if pages are slow to populate.
+- `timeouts` — raise if pages are slow to populate (`buyLinkMs` is a short extra
+  wait for the buy CTA href to hydrate off `#`).
 
 Other knobs (env vars / matching `workflow_dispatch` inputs):
 - `CONCURRENCY` (default **3**) — pages checked in parallel.

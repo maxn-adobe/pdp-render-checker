@@ -1,6 +1,13 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import { config } from "./config.mjs";
+import {
+  looksLikePrice,
+  isNonZeroPrice,
+  templateIdFromExpressUrl,
+  findPlaceholders,
+  verdicts,
+} from "./checks.mjs";
 
 // Parallel page checks. Measured locally: concurrency 3 is reliable (0 spurious
 // failures, ~2.3x faster than serial); 4-5 caused real content-never-injected
@@ -65,13 +72,16 @@ async function checkPage(browser, url) {
         (sel) => {
           const h1 = document.querySelector(sel.h1);
           const img = document.querySelector(sel.hero);
+          const price = document.querySelector(sel.price);
           return !!(
             h1 &&
             h1.textContent.trim() &&
             img &&
             img.getAttribute("src") &&
             img.complete &&
-            img.naturalWidth > 0
+            img.naturalWidth > 0 &&
+            price &&
+            price.textContent.trim()
           );
         },
         config.selectors,
@@ -103,11 +113,77 @@ async function checkPage(browser, url) {
     }
     result.checks.hero = { present: heroCount > 0, hasSrc, visible, decoded };
 
+    // ---- Price ----
+    // A blank/$0.00 price is a real defect on a shopping page. nonZero is false
+    // only when every digit is 0 (so "$0.50" passes, "$0.00" fails).
+    const priceLoc = page.locator(config.selectors.price).first();
+    const priceCount = await priceLoc.count();
+    const priceText = priceCount ? ((await priceLoc.textContent()) || "").trim() : "";
+    result.checks.price = {
+      present: priceCount > 0,
+      visible: priceCount ? await priceLoc.isVisible() : false,
+      nonEmpty: priceText.length > 0,
+      looksLikePrice: looksLikePrice(priceText),
+      nonZero: isNonZeroPrice(priceText),
+    };
+
+    // ---- Buy link (structural only, no network) ----
+    // The CTA points at the Adobe Express editor, not Zazzle, and starts as
+    // href="#" until hydration. Give it a short beat to populate, then confirm
+    // it is a real Express template URL whose templateId matches the page's.
+    const buy = page.locator(config.selectors.buyButton).first();
+    const buyCount = await buy.count();
+    if (buyCount) {
+      await page
+        .waitForFunction(
+          (sel) => {
+            const a = document.querySelector(sel.buyButton);
+            const h = a && a.getAttribute("href");
+            return !!(h && h !== "#");
+          },
+          config.selectors,
+          { timeout: config.timeouts.buyLinkMs }
+        )
+        .catch(() => {});
+    }
+    const href = buyCount ? (await buy.getAttribute("href")) || "" : "";
+    const hrefTemplateId = templateIdFromExpressUrl(href);
+    const pageTemplateId = await page
+      .locator(config.selectors.productContainer)
+      .first()
+      .getAttribute("data-template-id")
+      .catch(() => null);
+    result.checks.buyLink = {
+      present: buyCount > 0,
+      visible: buyCount ? await buy.isVisible() : false,
+      hasHref: !!href && href !== "#",
+      isExpressUrl: !!hrefTemplateId,
+      templateIdMatches: !!(hrefTemplateId && pageTemplateId && hrefTemplateId === pageTemplateId),
+    };
+
+    // ---- No {{ }} placeholders (page-wide) ----
+    // Unresolved Milo authoring tokens leak from surrounding blocks (FAQ/banner/
+    // promo), never the PDP island. Scan visible text plus key attributes.
+    const scan = await page.evaluate(() => {
+      const attrs = [];
+      document.querySelectorAll("[src],[href],[alt],[title],meta[content]").forEach((el) => {
+        ["src", "href", "alt", "title", "content"].forEach((a) => {
+          const val = el.getAttribute(a);
+          if (val) attrs.push(val);
+        });
+      });
+      return { text: document.body ? document.body.innerText : "", attrs };
+    });
+    const placeholderHits = findPlaceholders([scan.text, ...scan.attrs]);
+    result.checks.noPlaceholders = {
+      clean: placeholderHits.length === 0,
+      samples: placeholderHits.slice(0, 10),
+    };
+
     // ---- Verdict ----
-    const c = result.checks;
-    const h1ok = c.h1.present && c.h1.visible && c.h1.nonEmpty;
-    const heroOk = c.hero.present && c.hero.visible && c.hero.decoded;
-    result.ok = h1ok && heroOk && result.errors.length === 0;
+    const v = verdicts(result);
+    result.ok =
+      v.h1 && v.hero && v.price && v.buy && v.placeholders && result.errors.length === 0;
   } catch (e) {
     result.errors.push(`render-failed: ${e.message}`);
   } finally {
@@ -119,13 +195,14 @@ async function checkPage(browser, url) {
 const mark = (b) => (b ? "✓" : "✗"); // check / cross
 
 function summaryRow(r) {
-  const h1 = r.checks.h1 || {};
-  const hero = r.checks.hero || {};
   const status = r.ok ? "✅ PASS" : "❌ FAIL";
-  const h1ok = h1.present && h1.visible && h1.nonEmpty;
-  const heroOk = hero.present && hero.visible && hero.decoded;
-  const notes = r.errors.length ? r.errors.join(", ") : "";
-  return `| ${status} | ${r.url} | ${mark(h1ok)} | ${mark(heroOk)} | ${notes} |`;
+  const v = verdicts(r);
+  const notes = [...r.errors];
+  const ph = r.checks.noPlaceholders;
+  if (!v.placeholders && ph && ph.samples && ph.samples.length) {
+    notes.push(`placeholders: ${ph.samples.join(" ")}`);
+  }
+  return `| ${status} | ${r.url} | ${mark(v.h1)} | ${mark(v.hero)} | ${mark(v.price)} | ${mark(v.buy)} | ${mark(v.placeholders)} | ${notes.join(", ")} |`;
 }
 
 // Written incrementally (one row per completed URL, flushed synchronously) so
@@ -135,7 +212,13 @@ function startSummary() {
   if (!path) return;
   fs.appendFileSync(
     path,
-    [`## PDP render check`, ``, `| Result | URL | H1 | Hero | Notes |`, `|---|---|:--:|:--:|---|`, ``].join("\n")
+    [
+      `## PDP render check`,
+      ``,
+      `| Result | URL | H1 | Hero | Price | Buy | {{ }} | Notes |`,
+      `|---|---|:--:|:--:|:--:|:--:|:--:|---|`,
+      ``,
+    ].join("\n")
   );
 }
 
