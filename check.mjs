@@ -6,6 +6,7 @@ import {
   isNonZeroPrice,
   templateIdFromExpressUrl,
   findPlaceholders,
+  isJunkValue,
   verdicts,
 } from "./checks.mjs";
 
@@ -92,10 +93,11 @@ async function checkPage(browser, url) {
     // ---- H1 (presence only) ----
     const h1 = page.locator(config.selectors.h1).first();
     const h1Count = await page.locator(config.selectors.h1).count();
+    const h1Text = h1Count ? ((await h1.textContent()) || "").trim() : "";
     result.checks.h1 = {
       present: h1Count > 0,
       visible: h1Count ? await h1.isVisible() : false,
-      nonEmpty: h1Count ? ((await h1.textContent()) || "").trim().length > 0 : false,
+      nonEmpty: h1Text.length > 0,
     };
 
     // ---- Hero image (presence only) ----
@@ -180,10 +182,93 @@ async function checkPage(browser, url) {
       samples: placeholderHits.slice(0, 10),
     };
 
+    // ---- Options (skip products that have none) ----
+    // Deployed options render as pills with a data-title and a selected marker.
+    const options = await page.evaluate((sel) => {
+      const c = document.querySelector(sel.optionsContainer);
+      if (!c) return { present: false, values: [] };
+      const values = [];
+      c.querySelectorAll("[data-title]").forEach((el) => {
+        const selected =
+          el.classList.contains("selected") || el.getAttribute("aria-checked") === "true";
+        if (selected) values.push((el.getAttribute("data-title") || "").trim());
+      });
+      c.querySelectorAll("select").forEach((s) => {
+        const opt = s.options[s.selectedIndex];
+        if (opt) values.push((opt.textContent || "").trim());
+      });
+      return { present: true, values };
+    }, config.selectors);
+    const optionValues = options.values;
+    result.checks.options = {
+      applicable: options.present && optionValues.length > 0,
+      values: optionValues,
+      bad: optionValues.filter((val) => !val || isJunkValue(val)),
+    };
+
+    // ---- No none/null/undefined/N/A junk in filled-in fields ----
+    const junkSamples = [h1Text, priceText, ...optionValues].filter((val) => isJunkValue(val));
+    result.checks.noJunk = {
+      clean: junkSamples.length === 0,
+      samples: [...new Set(junkSamples)].slice(0, 10),
+    };
+
+    // ---- Rest of the photos load (every image in the product gallery) ----
+    // Thumbnails decode a beat after the hero, so wait (bounded) before judging.
+    await page
+      .waitForFunction(
+        (sel) => {
+          const imgs = [...document.querySelectorAll(`${sel.imagesContainer} img`)];
+          return imgs.length > 0 && imgs.every((i) => i.complete && i.naturalWidth > 0);
+        },
+        config.selectors,
+        { timeout: config.timeouts.imagesMs }
+      )
+      .catch(() => {});
+    result.checks.photos = await page.evaluate((sel) => {
+      const container = document.querySelector(sel.imagesContainer);
+      const imgs = [...document.querySelectorAll(`${sel.imagesContainer} img`)];
+      const undecoded = imgs
+        .filter((i) => !(i.complete && i.naturalWidth > 0))
+        .map((i) => i.getAttribute("alt") || i.getAttribute("src") || "(image)");
+      return {
+        present: !!container,
+        total: imgs.length,
+        decoded: imgs.length - undecoded.length,
+        undecoded: undecoded.slice(0, 10),
+      };
+    }, config.selectors);
+
+    // ---- All blocks render (generic: any present block must not be broken) ----
+    result.checks.blocks = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      if (!main) return { total: 0, broken: [] };
+      const els = [...main.querySelectorAll("[data-block-name]")];
+      const broken = [];
+      els.forEach((b) => {
+        const name = b.getAttribute("data-block-name");
+        const status = b.getAttribute("data-block-status");
+        const empty = b.childElementCount === 0 && !(b.textContent || "").trim();
+        if ((status && status !== "loaded") || empty) {
+          broken.push(name + (status && status !== "loaded" ? `(${status})` : "(empty)"));
+        }
+      });
+      return { total: els.length, broken: broken.slice(0, 10) };
+    });
+
     // ---- Verdict ----
     const v = verdicts(result);
     result.ok =
-      v.h1 && v.hero && v.price && v.buy && v.placeholders && result.errors.length === 0;
+      v.h1 &&
+      v.hero &&
+      v.price &&
+      v.buy &&
+      v.placeholders &&
+      v.options &&
+      v.noJunk &&
+      v.photos &&
+      v.blocks &&
+      result.errors.length === 0;
   } catch (e) {
     result.errors.push(`render-failed: ${e.message}`);
   } finally {
@@ -197,12 +282,25 @@ const mark = (b) => (b ? "✓" : "✗"); // check / cross
 function summaryRow(r) {
   const status = r.ok ? "✅ PASS" : "❌ FAIL";
   const v = verdicts(r);
+  const c = r.checks;
   const notes = [...r.errors];
-  const ph = r.checks.noPlaceholders;
-  if (!v.placeholders && ph && ph.samples && ph.samples.length) {
-    notes.push(`placeholders: ${ph.samples.join(" ")}`);
+  if (!v.placeholders && c.noPlaceholders?.samples?.length) {
+    notes.push(`placeholders: ${c.noPlaceholders.samples.join(" ")}`);
   }
-  return `| ${status} | ${r.url} | ${mark(v.h1)} | ${mark(v.hero)} | ${mark(v.price)} | ${mark(v.buy)} | ${mark(v.placeholders)} | ${notes.join(", ")} |`;
+  if (!v.noJunk && c.noJunk?.samples?.length) {
+    notes.push(`junk: ${c.noJunk.samples.join(" ")}`);
+  }
+  if (!v.options && c.options?.bad?.length) {
+    notes.push(`bad options: ${c.options.bad.join(" ")}`);
+  }
+  if (!v.photos && c.photos) {
+    notes.push(`images ${c.photos.decoded}/${c.photos.total} decoded`);
+  }
+  if (!v.blocks && c.blocks?.broken?.length) {
+    notes.push(`blocks: ${c.blocks.broken.join(" ")}`);
+  }
+  const cells = [v.h1, v.hero, v.price, v.buy, v.placeholders, v.options, v.noJunk, v.photos, v.blocks];
+  return `| ${status} | ${r.url} | ${cells.map(mark).join(" | ")} | ${notes.join(", ")} |`;
 }
 
 // Written incrementally (one row per completed URL, flushed synchronously) so
@@ -215,8 +313,8 @@ function startSummary() {
     [
       `## PDP render check`,
       ``,
-      `| Result | URL | H1 | Hero | Price | Buy | {{ }} | Notes |`,
-      `|---|---|:--:|:--:|:--:|:--:|:--:|---|`,
+      `| Result | URL | H1 | Hero | Price | Buy | {{ }} | Options | Junk | Images | Blocks | Notes |`,
+      `|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|`,
       ``,
     ].join("\n")
   );

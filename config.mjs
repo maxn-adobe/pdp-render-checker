@@ -18,6 +18,8 @@ export const config = {
     buyButton: "#pdpx-checkout-button",
     // Wraps the product content once hydrated; carries data-template-id.
     productContainer: ".pdpx-global-container",
+    optionsContainer: "#pdpx-customization-inputs-container",
+    imagesContainer: "#pdpx-product-images-container",
   },
 
   // 3. PATTERNS — how a rendered value is judged "real".
@@ -32,11 +34,22 @@ export const config = {
     placeholder: /\{\{[^}]+\}\}/,
   },
 
+  // 4. JUNK TOKENS — leaked internal values that must never reach a live field.
+  //    Matched case-insensitively; `allow` is an exact-cased list of real labels
+  //    that would otherwise trip the check (e.g. the legitimate "None" option).
+  junk: {
+    tokens: ["none", "null", "undefined", "n/a"],
+    allow: ["None"],
+  },
+
   // Timeouts (ms). Give the client-side Zazzle call room to return.
   timeouts: {
     navigateMs: 30000,
     contentInjectedMs: 20000,
     // Short extra wait for the buy CTA href to hydrate off its "#" placeholder.
     buyLinkMs: 5000,
+    // Bounded wait for every gallery image (hero + thumbnails) to decode; the
+    // Zazzle rendering endpoint returns them a few seconds after injection.
+    imagesMs: 15000,
   },
 };

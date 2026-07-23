@@ -35,6 +35,16 @@ export function findPlaceholders(strings, re = config.patterns.placeholder) {
   return [...new Set(hits)];
 }
 
+// A filled-in value is "junk" if it's a leaked internal token (none/null/...),
+// in any case, unless it exactly matches an allowlisted real label (e.g. the
+// legitimate "None" envelopes option). Blank is handled by the caller.
+export function isJunkValue(value) {
+  const v = (value == null ? "" : String(value)).trim();
+  if (!v) return false;
+  if (config.junk.allow.includes(v)) return false;
+  return config.junk.tokens.includes(v.toLowerCase());
+}
+
 // Fold each check's boolean sub-fields into a single pass/fail per check.
 // Used by both the verdict in check.mjs and the summary table, so the AND-logic
 // lives in exactly one place.
@@ -60,5 +70,11 @@ export function verdicts(r) {
       c.buyLink.templateIdMatches
     ),
     placeholders: !!(c.noPlaceholders && c.noPlaceholders.clean),
+    // Options only apply when the product has them; skip (pass) otherwise.
+    options: !(c.options && c.options.applicable) || (c.options.bad || []).length === 0,
+    noJunk: !!(c.noJunk && c.noJunk.clean),
+    photos: !!(c.photos && c.photos.present && c.photos.total > 0 && c.photos.decoded === c.photos.total),
+    // Generic no-error: any block present must not be broken (empty/failed).
+    blocks: !!(c.blocks && (c.blocks.broken || []).length === 0),
   };
 }

@@ -21,6 +21,17 @@ validated upstream before page generation).
 - No leftover `{{ }}` placeholders: the rendered text and key attributes carry no
   unresolved Milo authoring tokens (these leak from surrounding authored blocks,
   not the PDP island itself).
+- Options look right: where a product has customization options, every selected
+  value is real (non-empty, never "none"/"null"/etc.). Products with no options
+  are skipped.
+- No junk tokens: filled-in fields (title, price, option values) contain no
+  literal none/null/undefined/N/A (matched in any case; the legitimate "None"
+  option label is allowlisted).
+- Rest of the photos load: every image in the product gallery (hero + all
+  thumbnails) actually decoded, not just the hero.
+- All blocks render: any Milo block present on the page is non-empty and not in a
+  failed/loading state. (Generic no-error check — it catches a broken block but
+  not a wholly-absent expected one, as there is no per-product-type block manifest.)
 - A page that never populates within the timeout fails (that is the bug we hunt).
 - Checks against every URL in one run, in parallel (bounded concurrency).
 
@@ -94,13 +105,16 @@ npm test
 ## Tuning
 
 Edit `config.mjs`:
-- `selectors` — pin the title, hero, price, buy-button, and product-container
-  selectors to your actual PDP block markup.
+- `selectors` — pin the title, hero, price, buy-button, product-container,
+  options-container, and images-container selectors to your actual PDP markup.
 - `patterns` — the currency, Express-template-URL, and `{{ }}` placeholder
   regexes used by the price / buy-link / placeholder checks.
+- `junk` — the leaked-token list (`none`/`null`/`undefined`/`n/a`) and the
+  exact-cased `allow` list of legitimate labels (e.g. the "None" option).
 - `allowedHostPattern` — adjust if your branch/repo/owner/production domain differ.
-- `timeouts` — raise if pages are slow to populate (`buyLinkMs` is a short extra
-  wait for the buy CTA href to hydrate off `#`).
+- `timeouts` — raise if pages are slow to populate (`buyLinkMs` waits for the buy
+  CTA href to hydrate off `#`; `imagesMs` bounds the wait for every gallery image
+  to decode).
 
 Other knobs (env vars / matching `workflow_dispatch` inputs):
 - `CONCURRENCY` (default **3**) — pages checked in parallel.

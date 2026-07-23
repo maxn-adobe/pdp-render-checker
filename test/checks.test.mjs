@@ -5,6 +5,7 @@ import {
   isNonZeroPrice,
   templateIdFromExpressUrl,
   findPlaceholders,
+  isJunkValue,
   verdicts,
 } from "../checks.mjs";
 
@@ -65,6 +66,23 @@ test("findPlaceholders: clean content yields an empty array", () => {
   assert.deepEqual(findPlaceholders(["clean text", "also clean", ""]), []);
 });
 
+test("isJunkValue: flags leaked internal tokens in any case", () => {
+  assert.ok(isJunkValue("none"));
+  assert.ok(isJunkValue("NONE"));
+  assert.ok(isJunkValue("null"));
+  assert.ok(isJunkValue("undefined"));
+  assert.ok(isJunkValue("N/A"));
+  assert.ok(isJunkValue("n/a"));
+});
+
+test("isJunkValue: allows the allowlisted 'None' label and normal values", () => {
+  assert.equal(isJunkValue("None"), false); // legitimate envelopes option label
+  assert.equal(isJunkValue("Signature Matte"), false);
+  assert.equal(isJunkValue("$23.15"), false);
+  assert.equal(isJunkValue(""), false);
+  assert.equal(isJunkValue(null), false);
+});
+
 // ---- verdicts ----
 function passingResult() {
   return {
@@ -75,6 +93,10 @@ function passingResult() {
       price: { present: true, visible: true, nonEmpty: true, looksLikePrice: true, nonZero: true },
       buyLink: { present: true, visible: true, hasHref: true, isExpressUrl: true, templateIdMatches: true },
       noPlaceholders: { clean: true, samples: [] },
+      options: { applicable: true, values: ["Squared", "Signature Matte"], bad: [] },
+      noJunk: { clean: true, samples: [] },
+      photos: { present: true, total: 7, decoded: 7, undecoded: [] },
+      blocks: { total: 0, broken: [] },
     },
   };
 }
@@ -82,6 +104,7 @@ function passingResult() {
 test("verdicts: a fully-passing result is all true", () => {
   assert.deepEqual(verdicts(passingResult()), {
     h1: true, hero: true, price: true, buy: true, placeholders: true,
+    options: true, noJunk: true, photos: true, blocks: true,
   });
 });
 
@@ -103,8 +126,38 @@ test("verdicts: a leaked placeholder fails the placeholders verdict", () => {
   assert.equal(verdicts(r).placeholders, false);
 });
 
-test("verdicts: missing checks degrade to false instead of throwing", () => {
-  const allFalse = { h1: false, hero: false, price: false, buy: false, placeholders: false };
-  assert.deepEqual(verdicts({ checks: {} }), allFalse);
-  assert.deepEqual(verdicts({}), allFalse);
+test("verdicts: options skip when not applicable but fail on a bad value", () => {
+  const skip = passingResult();
+  skip.checks.options = { applicable: false, values: [], bad: [] };
+  assert.equal(verdicts(skip).options, true);
+  const bad = passingResult();
+  bad.checks.options = { applicable: true, values: ["none"], bad: ["none"] };
+  assert.equal(verdicts(bad).options, false);
+});
+
+test("verdicts: a junk field fails noJunk", () => {
+  const r = passingResult();
+  r.checks.noJunk = { clean: false, samples: ["null"] };
+  assert.equal(verdicts(r).noJunk, false);
+});
+
+test("verdicts: an undecoded gallery image fails photos", () => {
+  const r = passingResult();
+  r.checks.photos = { present: true, total: 7, decoded: 6, undecoded: ["Back"] };
+  assert.equal(verdicts(r).photos, false);
+});
+
+test("verdicts: a broken block fails blocks", () => {
+  const r = passingResult();
+  r.checks.blocks = { total: 2, broken: ["faq(loading)"] };
+  assert.equal(verdicts(r).blocks, false);
+});
+
+test("verdicts: missing checks degrade safely (options skips when absent)", () => {
+  const empty = {
+    h1: false, hero: false, price: false, buy: false, placeholders: false,
+    options: true, noJunk: false, photos: false, blocks: false,
+  };
+  assert.deepEqual(verdicts({ checks: {} }), empty);
+  assert.deepEqual(verdicts({}), empty);
 });
