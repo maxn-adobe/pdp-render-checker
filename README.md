@@ -56,9 +56,10 @@ Three ways to trigger, all via the one workflow (`.github/workflows/pdp-check.ym
      offers a single-line text box (no textarea/file upload; that's a GitHub
      platform limitation, not something this tool controls), so it's painful to
      review or paste hundreds of URLs into.
-   - `urls_file` — path to a URL list already committed to the repo (e.g.
-     `urls_2.txt`). Use this for any list you want versioned and reviewable via
-     `git diff`. Ignored if `urls` is filled in. Blank uses `urls.txt`.
+   - `urls_file` — a URL list committed under `sample-data/` (e.g. `urls_2.txt`;
+     a bare filename resolves inside `sample-data/`). Use this for any list you
+     want versioned and reviewable via `git diff`. Ignored if `urls` is filled
+     in. Blank uses `sample-data/urls.txt`.
    - `concurrency` — advanced override of page concurrency (see Tuning below).
 2. **CLI**, for one-off large batches that aren't committed to the repo — the
    CLI passes the full multi-line value with no textbox limit:
@@ -117,10 +118,10 @@ npx playwright install --with-deps chromium
 # single or comma/newline-separated list
 CHECK_URLS="https://main--da-express-milo--adobecom.aem.live/<path>" npm run check
 
-# a specific committed file
+# a specific committed list (bare filename resolves inside sample-data/)
 URLS_FILE=urls_2.txt npm run check
 
-# or just run against the committed urls.txt
+# or just run against the default sample-data/urls.txt
 npm run check
 ```
 
@@ -159,22 +160,30 @@ Other knobs (env vars / matching `workflow_dispatch` inputs):
 
 ## Build the distributable bundle (maintainers)
 
-The double-click app is a self-contained folder, so authors need zero setup:
+Run the build script — it produces a self-contained folder authors just
+double-click (bundled Node + vendored `node_modules` + the launcher), so they
+need nothing installed except Google Chrome:
 
-1. `npm install --omit=dev` — vendor `node_modules` (exceljs + playwright) into
-   the folder.
-2. Add a portable Node so `runtime/bin/node` exists (arm64 for Apple Silicon). If
-   you can assume Node 20+ is already on target machines, skip this — the launcher
-   falls back to the system `node`.
-3. Zip the folder including: the `.mjs` files, `config.mjs`, `public/`,
-   `node_modules/`, `runtime/` (if used), and `PDP Checker.command`.
-4. Share the zip (internal drive or repo). No Playwright browser download is
-   needed — rendering uses the user's installed Google Chrome.
+```bash
+./build-bundle.sh
+```
 
-Only macOS (Apple Silicon) is wired up today; a Windows `.cmd` launcher is a
-small follow-up. A *downloaded* `.command` may need a one-time right-click →
-**Open** (Gatekeeper); full code-signing/notarization is only necessary if this
-later becomes a native `.app`.
+Output:
+- `dist/PDP-Checker/` — the runnable folder (double-click `PDP Checker.command`).
+- `dist/PDP-Checker-macos-<arch>.zip` — the shareable artifact.
+
+The script installs prod deps (skipping the Playwright browser download —
+rendering uses the user's Chrome), downloads an official Node runtime from
+nodejs.org into `runtime/`, stages the app, and zips it. It builds for the host
+architecture by default; **cross-build for Intel** with `NODE_ARCH=x64
+./build-bundle.sh` (an x64 bundle also runs on Apple Silicon via Rosetta, so it's
+the safe single choice for a mixed fleet). Override the Node version with
+`NODE_VERSION=v22.11.0 ./build-bundle.sh`.
+
+macOS-first; a Windows `.cmd` launcher is a small follow-up. A *downloaded*
+`.command` may need a one-time right-click → **Open** (Gatekeeper); full
+code-signing/notarization is only necessary if this later becomes a native
+`.app`.
 
 ## Known limitations of local testing
 

@@ -9,7 +9,7 @@ on:
         required: false
         type: string
       urls_file:
-        description: "Path to a committed URL list file (e.g. urls_2.txt). Ignored if 'urls' above is filled in. Blank = urls.txt."
+        description: "Committed URL list to use (e.g. urls_2.txt; lists live in sample-data/, a bare filename is fine). Ignored if 'urls' above is filled in. Blank = urls.txt."
         required: false
         type: string
       concurrency:

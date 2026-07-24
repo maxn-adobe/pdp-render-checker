@@ -3,6 +3,7 @@
 // Action's output: an incremental job-summary table, console progress, and an
 // exit code. Run: `node check.mjs` (see .github/workflows/pdp-check.yml).
 import fs from "node:fs";
+import path from "node:path";
 import { rowModel, parseUrls } from "./checks.mjs";
 import { runChecks } from "./engine.mjs";
 
@@ -24,8 +25,11 @@ function loadUrls() {
     }
     raw = Array.isArray(arr) ? arr.join("\n") : "";
   } else {
-    const file = (process.env.URLS_FILE && process.env.URLS_FILE.trim()) || "urls.txt";
-    raw = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+    const requested = (process.env.URLS_FILE && process.env.URLS_FILE.trim()) || "urls.txt";
+    // Committed lists live in sample-data/, but the workflow input is a bare
+    // filename (e.g. "urls_2.txt"), so resolve against CWD first, then sample-data/.
+    const found = [requested, path.join("sample-data", requested)].find((p) => fs.existsSync(p));
+    raw = found ? fs.readFileSync(found, "utf8") : "";
   }
   const urls = parseUrls(raw);
   if (!urls.length) {
