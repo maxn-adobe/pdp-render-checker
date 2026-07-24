@@ -7,6 +7,8 @@ import {
   findPlaceholders,
   isJunkValue,
   verdicts,
+  parseUrls,
+  rowModel,
 } from "../checks.mjs";
 
 test("looksLikePrice: accepts real currency strings (any locale)", () => {
@@ -195,4 +197,43 @@ test("verdicts: missing checks degrade safely (options skips when absent)", () =
   };
   assert.deepEqual(verdicts({ checks: {} }), empty);
   assert.deepEqual(verdicts({}), empty);
+});
+
+// ---- parseUrls ----
+test("parseUrls: trims, strips trailing commas, drops comments/blanks, dedupes", () => {
+  const input = "https://a.com/1,\nhttps://a.com/2\n# comment\n\n  https://a.com/1  \n";
+  assert.deepEqual(parseUrls(input), ["https://a.com/1", "https://a.com/2"]);
+});
+
+test("parseUrls: splits on commas and newlines; accepts arrays; empty-safe", () => {
+  assert.deepEqual(parseUrls("a,b\nc"), ["a", "b", "c"]);
+  assert.deepEqual(parseUrls([" x ", "y", "x"]), ["x", "y"]);
+  assert.deepEqual(parseUrls(""), []);
+  assert.deepEqual(parseUrls(null), []);
+});
+
+// ---- rowModel ----
+test("rowModel: a passing result has 12 ok cells and no notes", () => {
+  const r = passingResult();
+  r.ok = true;
+  const m = rowModel(r);
+  assert.equal(m.ok, true);
+  assert.equal(m.cells.length, 12);
+  assert.ok(m.cells.every((c) => c.ok));
+  assert.deepEqual(m.notes, []);
+});
+
+test("rowModel: a leaked placeholder yields an un-ok cell and a note", () => {
+  const r = passingResult();
+  r.ok = false;
+  r.checks.noPlaceholders = { clean: false, samples: ["{{title}}"] };
+  const m = rowModel(r);
+  assert.equal(m.cells.find((c) => c.key === "placeholders").ok, false);
+  assert.ok(m.notes.some((n) => n.includes("{{title}}")));
+});
+
+test("rowModel: errors pass through to notes", () => {
+  const m = rowModel({ url: "u", ok: false, checks: {}, errors: ["url-not-allowed"] });
+  assert.ok(m.notes.includes("url-not-allowed"));
+  assert.equal(m.url, "u");
 });

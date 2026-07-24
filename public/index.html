@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PDP render checker</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px; max-width: 1600px; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #666; margin: 0 0 18px; }
+  fieldset { border: 1px solid #d9d9d9; border-radius: 8px; padding: 14px 16px; margin: 0 0 16px; }
+  legend { padding: 0 6px; color: #555; font-weight: 600; }
+  textarea { width: 100%; min-height: 120px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border: 1px solid #ccc; border-radius: 6px; resize: vertical; }
+  .controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .controls label { color: #555; }
+  input[type="number"] { width: 64px; padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; }
+  button { font: inherit; font-weight: 600; padding: 8px 18px; border: 0; border-radius: 6px; background: #1473e6; color: #fff; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .bar { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
+  progress { flex: 1; height: 10px; }
+  .summary { font-weight: 600; }
+  .downloads a { display: inline-block; margin-right: 10px; padding: 6px 12px; border: 1px solid #1473e6; border-radius: 6px; color: #1473e6; text-decoration: none; }
+  .filters { display: flex; gap: 16px; align-items: center; margin: 8px 0; }
+  .filters input[type="search"] { padding: 6px 10px; min-width: 260px; border: 1px solid #ccc; border-radius: 6px; }
+  .msg { padding: 10px 14px; border-radius: 6px; margin: 8px 0; }
+  .msg.err { background: #fbe9e7; color: #b3261e; }
+  .msg.warn { background: #fff4e5; color: #8a5a00; }
+  table.grid { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { border-bottom: 1px solid #e2e2e2; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.chk, td.chk { text-align: center; }
+  td.status { font-weight: 700; }
+  tr.fail td.status { color: #b3261e; }
+  tr.pass td.status { color: #1a7f37; }
+  td.chk.ok { color: #1a7f37; }
+  td.chk.no { color: #b3261e; font-weight: 700; }
+  td.url { max-width: 620px; overflow-wrap: anywhere; }
+  td.notes { color: #8a5a00; max-width: 340px; overflow-wrap: anywhere; }
+  tbody tr:not(.detail) { cursor: pointer; }
+  tbody tr:not(.detail):hover { background: rgba(0,0,0,0.04); }
+  tr.detail td { background: rgba(0,0,0,0.03); }
+  .detailwrap { display: flex; gap: 20px; flex-wrap: wrap; padding: 8px 4px; }
+  .shot { max-width: 420px; max-height: 320px; border: 1px solid #ccc; border-radius: 6px; }
+  .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; flex: 1; }
+  .checkbox { border: 1px solid #e2e2e2; border-radius: 6px; padding: 6px 8px; }
+  .ck { font-weight: 700; margin-bottom: 4px; }
+  .kv { font-size: 12px; }
+  .kk { color: #666; }
+</style>
+</head>
+<body>
+  <h1>PDP render checker</h1>
+  <p class="sub">Paste product URLs, run the 12-check validation locally, and download the results.</p>
+
+  <fieldset>
+    <legend>URLs</legend>
+    <textarea id="urls" placeholder="One URL per line (or comma-separated)…"></textarea>
+    <div class="controls">
+      <label>Load file <input id="file" type="file" accept=".txt,text/plain" /></label>
+      <label>Concurrency <input id="concurrency" type="number" min="1" max="10" value="3" /></label>
+      <button id="run">Run checks</button>
+    </div>
+  </fieldset>
+
+  <div id="status" hidden>
+    <div class="bar"><progress id="progress" value="0" max="1"></progress><span id="progressText"></span></div>
+    <div id="messages"></div>
+    <div class="summary" id="summary"></div>
+    <div class="downloads" id="downloads"></div>
+    <div class="filters" id="filters" hidden>
+      <input id="q" type="search" placeholder="Filter by URL…" autocomplete="off" />
+      <label><input id="failOnly" type="checkbox" /> Failures only</label>
+    </div>
+    <div id="app"></div>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {} };
+
+  $("file").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (f) $("urls").value = await f.text();
+  });
+
+  $("run").addEventListener("click", start);
+  $("q").addEventListener("input", (e) => { state.q = e.target.value; render(); });
+  $("failOnly").addEventListener("change", (e) => { state.failOnly = e.target.checked; render(); });
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text; // textContent = XSS-safe for page data
+    return e;
+  }
+
+  async function start() {
+    const urls = $("urls").value.trim();
+    if (!urls) return;
+    // reset
+    state.rows = []; state.open = {}; state.sortKey = "_i"; state.dir = 1;
+    $("status").hidden = false;
+    $("messages").textContent = "";
+    $("summary").textContent = "";
+    $("downloads").textContent = "";
+    $("filters").hidden = true;
+    $("app").textContent = "";
+    $("run").disabled = true;
+    $("progress").value = 0; $("progress").max = 1;
+    $("progressText").textContent = "Starting…";
+
+    let resp;
+    try {
+      resp = await fetch("/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ urls, concurrency: Number($("concurrency").value) || 3 }),
+      });
+    } catch (err) {
+      return fail("Could not reach the local server.");
+    }
+    const data = await resp.json();
+    if (!resp.ok) return fail(data.error || "Run could not start.");
+
+    if (data.skipped && data.skipped.length) {
+      const m = el("div", "msg warn", `Skipped ${data.skipped.length} URL(s) outside the allowed hosts.`);
+      $("messages").appendChild(m);
+    }
+    $("progress").max = data.total;
+    $("progressText").textContent = `0 / ${data.total}`;
+
+    const es = new EventSource("/progress/" + encodeURIComponent(data.runId));
+    es.addEventListener("result", (ev) => {
+      const { r, done, total } = JSON.parse(ev.data);
+      r._i = state.rows.length;
+      state.rows.push(r);
+      $("progress").value = done; $("progress").max = total;
+      $("progressText").textContent = `${done} / ${total}`;
+      render();
+    });
+    es.addEventListener("done", (ev) => {
+      const { passed, total, artifacts } = JSON.parse(ev.data);
+      es.close();
+      $("run").disabled = false;
+      $("progressText").textContent = `${total} / ${total}`;
+      $("summary").textContent = `${passed} / ${total} passed`;
+      $("filters").hidden = false;
+      const dl = $("downloads");
+      dl.textContent = "";
+      dl.appendChild(link(artifacts.html, "Open HTML report", true));
+      dl.appendChild(link(artifacts.xlsx, "Download XLSX"));
+      dl.appendChild(link(artifacts.csv, "Download CSV"));
+      render();
+    });
+    es.addEventListener("error", (ev) => {
+      es.close();
+      $("run").disabled = false;
+      let message = "The run stopped unexpectedly.";
+      try { message = JSON.parse(ev.data).message || message; } catch {}
+      fail(message);
+    });
+  }
+
+  function link(href, label, blank) {
+    const a = el("a", null, label);
+    a.href = href;
+    if (blank) { a.target = "_blank"; a.rel = "noopener"; }
+    return a;
+  }
+
+  function fail(message) {
+    $("run").disabled = false;
+    $("messages").appendChild(el("div", "msg err", message));
+  }
+
+  function setSort(key) {
+    if (state.sortKey === key) state.dir = -state.dir;
+    else { state.sortKey = key; state.dir = 1; }
+    render();
+  }
+
+  function visibleRows() {
+    const q = state.q.toLowerCase();
+    const list = state.rows.filter((r) => {
+      if (state.failOnly && r.ok) return false;
+      if (q && String(r.url).toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+    list.sort((a, b) => {
+      let av, bv;
+      if (state.sortKey === "status") { av = a.ok ? 1 : 0; bv = b.ok ? 1 : 0; }
+      else if (state.sortKey === "url") { av = String(a.url); bv = String(b.url); }
+      else { av = a._i; bv = b._i; }
+      if (av < bv) return -state.dir;
+      if (av > bv) return state.dir;
+      return 0;
+    });
+    return list;
+  }
+
+  function detail(r) {
+    const wrap = el("div", "detailwrap");
+    if (r.screenshot) {
+      const img = document.createElement("img");
+      img.className = "shot"; img.src = r.screenshot; img.alt = "page screenshot";
+      wrap.appendChild(img);
+    }
+    const grid = el("div", "checks");
+    for (const [k, obj] of Object.entries(r.checks || {})) {
+      const box = el("div", "checkbox");
+      box.appendChild(el("div", "ck", k));
+      if (obj && typeof obj === "object") {
+        for (const [f, val] of Object.entries(obj)) {
+          const line = el("div", "kv");
+          line.appendChild(el("span", "kk", f + ": "));
+          line.appendChild(el("span", "vv", Array.isArray(val) ? val.join(" ") : String(val)));
+          box.appendChild(line);
+        }
+      }
+      grid.appendChild(box);
+    }
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  function render() {
+    const cols = state.rows.length ? state.rows[0].cells.map((c) => c.label) : [];
+    const app = $("app");
+    app.textContent = "";
+    const table = el("table", "grid");
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    const thS = el("th", "sortable", "Result"); thS.onclick = () => setSort("status");
+    const thU = el("th", "sortable", "URL"); thU.onclick = () => setSort("url");
+    htr.appendChild(thS); htr.appendChild(thU);
+    cols.forEach((label) => htr.appendChild(el("th", "chk", label)));
+    htr.appendChild(el("th", null, "Notes"));
+    thead.appendChild(htr); table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const r of visibleRows()) {
+      const tr = el("tr", r.ok ? "pass" : "fail");
+      tr.appendChild(el("td", "status", r.ok ? "PASS" : "FAIL"));
+      const tdUrl = el("td", "url");
+      tdUrl.appendChild(link(r.url, r.url, true));
+      tr.appendChild(tdUrl);
+      r.cells.forEach((c) => tr.appendChild(el("td", "chk " + (c.ok ? "ok" : "no"), c.ok ? "✓" : "✗")));
+      tr.appendChild(el("td", "notes", (r.notes || []).join(", ")));
+      tr.addEventListener("click", (ev) => { if (ev.target.tagName === "A") return; state.open[r._i] = !state.open[r._i]; render(); });
+      tbody.appendChild(tr);
+      if (state.open[r._i]) {
+        const dtr = el("tr", "detail");
+        const dtd = document.createElement("td");
+        dtd.colSpan = cols.length + 3;
+        dtd.appendChild(detail(r));
+        dtr.appendChild(dtd);
+        tbody.appendChild(dtr);
+      }
+    }
+    table.appendChild(tbody);
+    app.appendChild(table);
+  }
+})();
+</script>
+</body>
+</html>

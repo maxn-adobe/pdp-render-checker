@@ -88,3 +88,63 @@ export function verdicts(r) {
     altText: !!(c.altText && c.altText.total > 0 && c.altText.missing === 0),
   };
 }
+
+// Clean a raw URL blob (newline- or comma-separated) into a deduped list:
+// trim, strip trailing commas (a copy/paste artifact), drop blanks and "#"
+// comments. Shared by the CLI/Action loader and the server's input box.
+export function parseUrls(text) {
+  const lines = Array.isArray(text) ? text : String(text || "").split(/[\n,]/);
+  const urls = lines
+    .map((u) => u.trim().replace(/,+$/, "").trim())
+    .filter((u) => u && !u.startsWith("#"));
+  return [...new Set(urls)];
+}
+
+// Ordered check columns — the single source of truth for every output format
+// (Action markdown table, XLSX, HTML report). Keys match verdicts().
+export const CHECK_COLUMNS = [
+  { key: "h1", label: "H1" },
+  { key: "hero", label: "Hero" },
+  { key: "price", label: "Price" },
+  { key: "buy", label: "Buy" },
+  { key: "placeholders", label: "{{ }}" },
+  { key: "options", label: "Options" },
+  { key: "noJunk", label: "Junk" },
+  { key: "photos", label: "Images" },
+  { key: "blocks", label: "Blocks" },
+  { key: "meta", label: "Meta" },
+  { key: "mobile", label: "Mobile" },
+  { key: "altText", label: "Alt" },
+];
+
+// Normalize one result into a render-ready row: per-column pass/fail plus the
+// human-readable failure notes. Consumed by all three output formatters so the
+// column set and notes stay identical across markdown, XLSX, and HTML.
+export function rowModel(result) {
+  const v = verdicts(result);
+  const c = (result && result.checks) || {};
+  const cells = CHECK_COLUMNS.map((col) => ({ key: col.key, label: col.label, ok: !!v[col.key] }));
+  const notes = [...((result && result.errors) || [])];
+  if (!v.placeholders && c.noPlaceholders?.samples?.length) notes.push(`placeholders: ${c.noPlaceholders.samples.join(" ")}`);
+  if (!v.noJunk && c.noJunk?.samples?.length) notes.push(`junk: ${c.noJunk.samples.join(" ")}`);
+  if (!v.options && c.options?.bad?.length) notes.push(`bad options: ${c.options.bad.join(" ")}`);
+  if (!v.photos && c.photos) notes.push(`images ${c.photos.decoded}/${c.photos.total} decoded`);
+  if (!v.blocks && c.blocks?.broken?.length) notes.push(`blocks: ${c.blocks.broken.join(" ")}`);
+  if (!v.meta && c.meta) {
+    const reasons = [];
+    if (!c.meta.hasDescription) reasons.push("no-desc");
+    else if (!c.meta.descriptionOk) reasons.push("desc-short/dup");
+    if (!c.meta.hasCanonical) reasons.push("no-canonical");
+    if (!c.meta.hasOgTitle) reasons.push("no-og:title");
+    if (!c.meta.hasOgImage) reasons.push("no-og:image");
+    notes.push(`meta: ${reasons.join("/")}`);
+  }
+  if (!v.mobile && c.mobile) {
+    const bits = [];
+    if (!c.mobile.noOverflow) bits.push(`overflow ${c.mobile.overflowPx}px`);
+    if (c.mobile.missing?.length) bits.push(`missing ${c.mobile.missing.join(",")}`);
+    notes.push(`mobile: ${bits.join(" ")}`);
+  }
+  if (!v.altText && c.altText) notes.push(`alt missing: ${c.altText.missing}`);
+  return { url: result?.url, ok: !!(result && result.ok), cells, notes };
+}
