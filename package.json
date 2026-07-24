@@ -2,12 +2,17 @@
   "name": "pdp-render-checker",
   "version": "1.0.0",
   "private": true,
-  "description": "Headless render check for Zazzle-backed AEM Edge Delivery PDPs",
+  "description": "Render-QA for Zazzle-backed AEM Edge Delivery PDPs — GitHub Action + local web app",
   "scripts": {
     "check": "node check.mjs",
+    "start": "node server.mjs",
     "test": "node --test"
   },
-  "devDependencies": {
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
     "playwright": "^1.58.0"
   }
 }

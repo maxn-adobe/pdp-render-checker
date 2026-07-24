@@ -83,7 +83,32 @@ Results appear in the run's job summary (a pass/fail table plus full JSON),
 the job timeout partway through, the summary already shows every URL checked so
 far, not nothing. The run exits non-zero (red) if any page fails.
 
-## Local run
+## Run locally as an app (web UI)
+
+Run bulk checks on your own machine — no CI queue, and richer, downloadable
+output. Everything runs locally: the server listens on `127.0.0.1` only and
+nothing is sent anywhere.
+
+**Double-click (no terminal) — for authors.** Get the distributable bundle (see
+[Build the distributable bundle](#build-the-distributable-bundle-maintainers)),
+unzip it, and double-click **`PDP Checker.command`**. Your browser opens to the
+checker UI: paste or upload URLs, click **Run checks**, watch live progress, then
+**Download XLSX** (a color-coded spreadsheet) and **Open HTML report** (an
+interactive report with a screenshot of every failing page). Rendering uses your
+installed Google Chrome.
+
+> First launch only: if macOS warns about an unidentified developer, right-click
+> `PDP Checker.command` → **Open** once (or run
+> `xattr -d com.apple.quarantine "PDP Checker.command"`).
+
+**From a terminal — for developers.**
+
+```bash
+npm install
+npm start          # prints a http://127.0.0.1:<port> URL — open it in a browser
+```
+
+## Command-line run
 
 ```bash
 npm install
@@ -131,6 +156,25 @@ Other knobs (env vars / matching `workflow_dispatch` inputs):
 - `RECYCLE_EVERY` (default **40**) — the browser is closed and relaunched every
   N URLs, as cheap insurance against unbounded memory/handle growth in one
   long-lived Chromium process on very large batches.
+
+## Build the distributable bundle (maintainers)
+
+The double-click app is a self-contained folder, so authors need zero setup:
+
+1. `npm install --omit=dev` — vendor `node_modules` (exceljs + playwright) into
+   the folder.
+2. Add a portable Node so `runtime/bin/node` exists (arm64 for Apple Silicon). If
+   you can assume Node 20+ is already on target machines, skip this — the launcher
+   falls back to the system `node`.
+3. Zip the folder including: the `.mjs` files, `config.mjs`, `public/`,
+   `node_modules/`, `runtime/` (if used), and `PDP Checker.command`.
+4. Share the zip (internal drive or repo). No Playwright browser download is
+   needed — rendering uses the user's installed Google Chrome.
+
+Only macOS (Apple Silicon) is wired up today; a Windows `.cmd` launcher is a
+small follow-up. A *downloaded* `.command` may need a one-time right-click →
+**Open** (Gatekeeper); full code-signing/notarization is only necessary if this
+later becomes a native `.app`.
 
 ## Known limitations of local testing
 
