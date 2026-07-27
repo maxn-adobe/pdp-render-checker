@@ -5,3 +5,4 @@ playwright-report/
 *.log
 runs/
 .claude/
+dist/
