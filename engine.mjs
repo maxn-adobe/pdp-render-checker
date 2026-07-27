@@ -12,7 +12,7 @@ import {
 } from "./checks.mjs";
 
 export async function checkPage(browser, url, opts = {}) {
-  const { captureScreenshotOnFailure = false } = opts;
+  const { captureScreenshotOnFailure = false, userAgent } = opts;
   const result = { url, ok: false, checks: {}, errors: [] };
 
   if (!config.allowedHostPattern.test(url)) {
@@ -20,7 +20,7 @@ export async function checkPage(browser, url, opts = {}) {
     return result;
   }
 
-  const page = await browser.newPage();
+  const page = await browser.newPage(userAgent ? { userAgent } : {});
   try {
     await page.goto(url, {
       waitUntil: "domcontentloaded",
@@ -327,6 +327,22 @@ export async function checkPage(browser, url, opts = {}) {
 // periodically (cheap insurance against handle/memory growth on long batches).
 // Reports each result via onResult(result, { done, total }); returns all
 // results. Output/exit-code concerns belong to the caller, not here.
+// Headless Chromium's User-Agent contains "HeadlessChrome", which some CDN edges
+// (notably Akamai in front of www.adobe.com) reject at the HTTP/2 layer with
+// net::ERR_HTTP2_PROTOCOL_ERROR. Derive the browser's real UA and drop that token
+// so pages behind such edges load; harmless for hosts that don't care (aem.live).
+async function realChromeUserAgent(browser) {
+  const page = await browser.newPage();
+  try {
+    const ua = await page.evaluate(() => navigator.userAgent);
+    return ua.replace(/HeadlessChrome/gi, "Chrome");
+  } catch {
+    return undefined; // fall back to the default UA
+  } finally {
+    await page.close();
+  }
+}
+
 export async function runChecks({
   urls,
   concurrency = Number(process.env.CONCURRENCY || 3),
@@ -340,13 +356,14 @@ export async function runChecks({
   let done = 0;
   let sinceRecycle = 0;
   let browser = await chromium.launch(launchOpts);
+  let userAgent = await realChromeUserAgent(browser);
   const results = [];
   try {
     for (let i = 0; i < urls.length; i += concurrency) {
       const chunk = urls.slice(i, i + concurrency);
       const chunkResults = await Promise.all(
         chunk.map((u) =>
-          checkPage(browser, u, { captureScreenshotOnFailure }).then((r) => {
+          checkPage(browser, u, { captureScreenshotOnFailure, userAgent }).then((r) => {
             done += 1;
             if (onResult) onResult(r, { done, total });
             return r;
@@ -358,6 +375,7 @@ export async function runChecks({
       if (sinceRecycle >= recycleEvery && done < total) {
         await browser.close();
         browser = await chromium.launch(launchOpts);
+        userAgent = await realChromeUserAgent(browser);
         sinceRecycle = 0;
       }
     }
