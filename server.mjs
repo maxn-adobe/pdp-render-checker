@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.mjs";
 import { parseUrls, rowModel } from "./checks.mjs";
-import { runChecks } from "./engine.mjs";
+import { runChecks, autoConcurrency } from "./engine.mjs";
 import { buildXlsx, buildCsv, buildHtmlReport } from "./report.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -69,9 +69,9 @@ function startRun(urls, concurrency) {
   runs.set(runId, run);
 
   (async () => {
-    const onResult = (r, { done, total }) => {
-      run.results.push(r);
-      for (const res of run.listeners) sse(res, "result", { r: toView(r), done, total });
+    const onResult = (r, { index, done, total, attempt }) => {
+      run.results[index] = r;
+      for (const res of run.listeners) sse(res, "result", { r: toView(r), index, done, total, attempt });
     };
     const opts = { urls, concurrency, captureScreenshotOnFailure: true, onResult };
     let results;
@@ -138,7 +138,9 @@ async function handleRun(req, res) {
     res.writeHead(400, { "content-type": "application/json" });
     return res.end(JSON.stringify({ error: "No allowed URLs to check.", skipped }));
   }
-  const concurrency = Math.max(1, Math.min(10, Number(data.concurrency) || 3));
+  // Blank = let the engine auto-scale to the machine; an explicit value is
+  // clamped to a sane hard limit (the retry pass recovers over-parallelized runs).
+  const concurrency = data.concurrency ? Math.max(1, Math.min(24, Number(data.concurrency))) : undefined;
   const runId = startRun(allowed, concurrency);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ runId, total: allowed.length, skipped }));
@@ -156,7 +158,9 @@ function handleProgress(req, res, runId) {
     connection: "keep-alive",
   });
   // Replay anything already collected (client may connect after results start).
-  run.results.forEach((r, i) => sse(res, "result", { r: toView(r), done: i + 1, total: run.total }));
+  run.results.forEach((r, i) => {
+    if (r) sse(res, "result", { r: toView(r), index: i, done: i + 1, total: run.total, attempt: 1 });
+  });
   if (run.done) {
     if (run.error) sse(res, "error", { message: run.error });
     else sse(res, "done", { passed: run.results.filter((r) => r.ok).length, total: run.results.length, artifacts: run.artifacts });
@@ -196,7 +200,15 @@ const server = http.createServer(async (req, res) => {
       // Which build is running: process.arch is arm64 for the Apple Silicon
       // bundle, x64 for the Intel bundle (even under Rosetta).
       res.writeHead(200, { "content-type": "application/json" });
-      return res.end(JSON.stringify({ arch: process.arch, platform: process.platform, node: process.version }));
+      return res.end(
+        JSON.stringify({
+          arch: process.arch,
+          platform: process.platform,
+          node: process.version,
+          defaultConcurrency: Number(process.env.CONCURRENCY) || autoConcurrency(),
+          maxConcurrency: config.perf.maxConcurrency,
+        })
+      );
     }
     if (req.method === "POST" && pathname === "/run") return await handleRun(req, res);
     if (req.method === "GET" && pathname.startsWith("/progress/")) {

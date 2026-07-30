@@ -94,9 +94,9 @@ const urls = loadUrls();
 startSummary();
 const results = await runChecks({
   urls,
-  onResult: (r, { done, total }) => {
-    console.log(`[${done}/${total}] ${mark(r.ok)} ${r.url}`);
-    appendSummaryRow(r);
+  onResult: (r, { done, total, attempt }) => {
+    console.log(`[${done}/${total}] ${mark(r.ok)} ${r.url}${attempt > 1 ? " (recheck ✓)" : ""}`);
+    if (attempt === 1) appendSummaryRow(r);
   },
 });
 finishSummary(results);

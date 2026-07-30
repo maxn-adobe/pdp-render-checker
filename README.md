@@ -152,11 +152,26 @@ Edit `config.mjs`:
   CTA href to hydrate off `#`; `imagesMs` bounds the gallery-image decode wait;
   `mobileReflowMs` is the settle time after switching to the mobile viewport).
 
-Other knobs (env vars / matching `workflow_dispatch` inputs):
-- `CONCURRENCY` (default **3**) — pages checked in parallel.
-- `RECYCLE_EVERY` (default **40**) — the browser is closed and relaunched every
-  N URLs, as cheap insurance against unbounded memory/handle growth in one
-  long-lived Chromium process on very large batches.
+### Performance / large batches
+
+The checker is I/O-bound (it mostly waits on the page + Zazzle's image endpoint),
+so it runs a **continuous worker pool** over one **shared, cached browser
+context**, then does a **serial retry pass** over any failures. That retry
+matters: running many pages at once starves the browser's layout engine and
+produces *transient* false failures (content loads but isn't laid out when
+checked); the contention-free retry re-checks those correctly, so genuinely
+broken pages stay failed while transient ones recover.
+
+Knobs (env vars / `config.perf`):
+- `CONCURRENCY` — first-pass parallelism. Default **auto-scales to CPU cores**,
+  capped at `perf.maxConcurrency` (**8**), because higher starves rendering. The
+  local app pre-fills its Concurrency field with this value; you can push it
+  higher and let the retry pass clean up.
+- `RETRIES` (default **1**) / `RETRY_CONCURRENCY` (default **1**, serial) — the
+  low-concurrency recovery pass over failed URLs.
+- `RECYCLE_EVERY` (default **150**) — browser + context are recycled every N URLs
+  to bound memory on very large (thousands-of-URLs) batches.
+- `PDP_PROFILE=1` — print per-phase timing (avg/median/p90) at the end of a run.
 
 ## Build the distributable bundle (maintainers)
 
@@ -210,3 +225,9 @@ full URL list before relying on them for large batches, and if a similar
 failure spike shows up there, it's worth checking whether the origin
 (Fastly/AEM Edge Delivery) is rate-limiting sustained request volume from the
 runner's IP, rather than re-tuning `CONCURRENCY` further.
+
+**Update:** the engine now auto-scales concurrency (capped) and adds a serial
+retry pass that re-checks failures contention-free — which recovers exactly these
+transient failures. In back-to-back testing the new engine was ~3× faster *and*
+passed more URLs than the old fixed-concurrency-3 engine (it recovered transient
+failures the old one reported), with no new false failures.
