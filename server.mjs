@@ -192,6 +192,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && pathname === "/") {
       return serveFile(res, path.join(PUBLIC, "index.html"), "text/html; charset=utf-8");
     }
+    if (req.method === "GET" && pathname === "/info") {
+      // Which build is running: process.arch is arm64 for the Apple Silicon
+      // bundle, x64 for the Intel bundle (even under Rosetta).
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ arch: process.arch, platform: process.platform, node: process.version }));
+    }
     if (req.method === "POST" && pathname === "/run") return await handleRun(req, res);
     if (req.method === "GET" && pathname.startsWith("/progress/")) {
       return handleProgress(req, res, decodeURIComponent(pathname.slice("/progress/".length)));

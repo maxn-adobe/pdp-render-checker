@@ -9,6 +9,7 @@
   * { box-sizing: border-box; }
   body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 24px; max-width: 1600px; }
   h1 { font-size: 20px; margin: 0 0 2px; }
+  .build { font-size: 12px; font-weight: 500; color: #555; border: 1px solid #ccc; border-radius: 10px; padding: 2px 8px; vertical-align: middle; margin-left: 6px; }
   .sub { color: #666; margin: 0 0 18px; }
   fieldset { border: 1px solid #d9d9d9; border-radius: 8px; padding: 14px 16px; margin: 0 0 16px; }
   legend { padding: 0 6px; color: #555; font-weight: 600; }
@@ -51,7 +52,7 @@
 </style>
 </head>
 <body>
-  <h1>PDP render checker</h1>
+  <h1>PDP render checker <span id="build" class="build" hidden></span></h1>
   <p class="sub">Paste product URLs, run the 12-check validation locally, and download the results.</p>
 
   <fieldset>
@@ -80,6 +81,18 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {} };
+
+  // Show which build (CPU architecture) of the bundle is running.
+  fetch("/info")
+    .then((r) => r.json())
+    .then((info) => {
+      const el = $("build");
+      const label =
+        info.arch === "arm64" ? "Apple Silicon (arm64)" : info.arch === "x64" ? "Intel (x64)" : info.arch;
+      el.textContent = label;
+      el.hidden = false;
+    })
+    .catch(() => {});
 
   $("file").addEventListener("change", async (e) => {
     const f = e.target.files[0];
