@@ -1,5 +1,6 @@
 // Shared validation engine. Imported by both the GitHub Action entrypoint
 // (check.mjs) and the local web app (server.mjs) so the two never fork.
+import os from "node:os";
 import { chromium } from "playwright";
 import { config } from "./config.mjs";
 import {
@@ -11,8 +12,25 @@ import {
   verdicts,
 } from "./checks.mjs";
 
-export async function checkPage(browser, url, opts = {}) {
-  const { captureScreenshotOnFailure = false, userAgent } = opts;
+// Optional per-phase profiling, enabled with PDP_PROFILE=1. Zero cost when off.
+const PROFILE = process.env.PDP_PROFILE ? new Map() : null;
+function recordPhase(label, ms) {
+  const a = PROFILE.get(label) || [];
+  a.push(ms);
+  PROFILE.set(label, a);
+}
+export function reportProfile() {
+  if (!PROFILE || PROFILE.size === 0) return;
+  const at = (arr, p) => [...arr].sort((a, b) => a - b)[Math.min(arr.length - 1, Math.floor(arr.length * p))];
+  console.error("\n[PDP_PROFILE] per-phase ms over n pages (avg / median / p90):");
+  for (const [label, arr] of PROFILE) {
+    const avg = Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+    console.error(`  ${label.padEnd(12)} n=${arr.length}  avg=${avg}  med=${Math.round(at(arr, 0.5))}  p90=${Math.round(at(arr, 0.9))}`);
+  }
+}
+
+export async function checkPage(context, url, opts = {}) {
+  const { captureScreenshotOnFailure = false } = opts;
   const result = { url, ok: false, checks: {}, errors: [] };
 
   if (!config.allowedHostPattern.test(url)) {
@@ -20,12 +38,23 @@ export async function checkPage(browser, url, opts = {}) {
     return result;
   }
 
-  const page = await browser.newPage(userAgent ? { userAgent } : {});
+  const t0 = PROFILE ? performance.now() : 0;
+  let tLast = t0;
+  const mark = (label) => {
+    if (!PROFILE) return;
+    const now = performance.now();
+    recordPhase(label, now - tLast);
+    tLast = now;
+  };
+
+  const page = await context.newPage();
+  mark("newPage");
   try {
     await page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: config.timeouts.navigateMs,
     });
+    mark("goto");
 
     // Wait for the client-side Zazzle call to inject the content we validate.
     // Waits for the image to actually finish decoding (not just get a `src`) —
@@ -54,6 +83,7 @@ export async function checkPage(browser, url, opts = {}) {
         { timeout: config.timeouts.contentInjectedMs }
       )
       .catch(() => result.errors.push("content-never-injected"));
+    mark("contentWait");
 
     // ---- H1 (presence only) ----
     const h1 = page.locator(config.selectors.h1).first();
@@ -177,6 +207,7 @@ export async function checkPage(browser, url, opts = {}) {
       clean: junkSamples.length === 0,
       samples: [...new Set(junkSamples)].slice(0, 10),
     };
+    mark("domReads");
 
     // ---- Rest of the photos load (every image in the product gallery) ----
     // Thumbnails decode a beat after the hero, so wait (bounded) before judging.
@@ -203,6 +234,7 @@ export async function checkPage(browser, url, opts = {}) {
         undecoded: undecoded.slice(0, 10),
       };
     }, config.selectors);
+    mark("imagesWait");
 
     // ---- All blocks render (generic: any present block must not be broken) ----
     result.checks.blocks = await page.evaluate(() => {
@@ -259,6 +291,7 @@ export async function checkPage(browser, url, opts = {}) {
         missingSrcs: missing.map((i) => i.getAttribute("src") || "(image)").slice(0, 5),
       };
     }, config.selectors);
+    mark("postImage");
 
     // ---- Mobile layout (MUST run last — it resizes the viewport) ----
     await page.setViewportSize({ width: config.mobile.width, height: config.mobile.height });
@@ -285,6 +318,7 @@ export async function checkPage(browser, url, opts = {}) {
         core: [config.selectors.h1, config.selectors.hero, config.selectors.price],
       }
     );
+    mark("mobile");
 
     // ---- Verdict ----
     const v = verdicts(result);
@@ -319,6 +353,7 @@ export async function checkPage(browser, url, opts = {}) {
     result.errors.push(`render-failed: ${e.message}`);
   } finally {
     await page.close();
+    if (PROFILE) recordPhase("total", performance.now() - t0);
   }
   return result;
 }
@@ -343,44 +378,90 @@ async function realChromeUserAgent(browser) {
   }
 }
 
+// Default concurrency scales to the machine (CPU cores), capped so we don't
+// hammer the origin or exhaust RAM. Explicit CONCURRENCY / param overrides it.
+export function autoConcurrency() {
+  const cores =
+    (typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length) || 4;
+  return Math.max(1, Math.min(config.perf.maxConcurrency, cores));
+}
+
+// Run a batch with a continuous worker pool (no chunk barriers — one slow URL
+// never stalls the others). All pages share one BrowserContext so the HTTP cache
+// (Adobe/Milo JS, CSS, fonts) is reused across the batch; the browser + context
+// are recycled every `recycleEvery` pages to bound memory on large runs. Reports
+// each result via onResult(result, { done, total }); returns results in input order.
 export async function runChecks({
   urls,
-  concurrency = Number(process.env.CONCURRENCY || 3),
-  recycleEvery = Number(process.env.RECYCLE_EVERY || 40),
+  concurrency = Number(process.env.CONCURRENCY) || autoConcurrency(),
+  recycleEvery = Number(process.env.RECYCLE_EVERY) || config.perf.recycleEvery,
+  retries = process.env.RETRIES != null ? Number(process.env.RETRIES) : config.perf.retries,
+  retryConcurrency = Number(process.env.RETRY_CONCURRENCY) || config.perf.retryConcurrency,
   browserChannel,
   captureScreenshotOnFailure = false,
   onResult,
 } = {}) {
   const launchOpts = browserChannel ? { channel: browserChannel } : {};
   const total = urls.length;
+  const results = new Array(total);
   let done = 0;
-  let sinceRecycle = 0;
+
   let browser = await chromium.launch(launchOpts);
-  let userAgent = await realChromeUserAgent(browser);
-  const results = [];
+  let ua = await realChromeUserAgent(browser);
+  let context = await browser.newContext(ua ? { userAgent: ua } : {});
+
+  // Worker pool over a set of URL indices at the given concurrency. On the first
+  // pass it records every result; on retry passes it only upgrades a recovered
+  // failure (a still-failing page keeps its original result + diagnostics).
+  const runPool = async (indices, poolSize, attempt) => {
+    let cursor = 0;
+    const worker = async () => {
+      for (let k = cursor++; k < indices.length; k = cursor++) {
+        const idx = indices[k];
+        const r = await checkPage(context, urls[idx], { captureScreenshotOnFailure });
+        if (attempt === 1) {
+          results[idx] = r;
+          done += 1;
+          if (onResult) onResult(r, { index: idx, done, total, attempt });
+        } else if (r.ok) {
+          results[idx] = r;
+          if (onResult) onResult(r, { index: idx, done, total, attempt });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(poolSize, indices.length) }, worker));
+  };
+
   try {
-    for (let i = 0; i < urls.length; i += concurrency) {
-      const chunk = urls.slice(i, i + concurrency);
-      const chunkResults = await Promise.all(
-        chunk.map((u) =>
-          checkPage(browser, u, { captureScreenshotOnFailure, userAgent }).then((r) => {
-            done += 1;
-            if (onResult) onResult(r, { done, total });
-            return r;
-          })
-        )
-      );
-      results.push(...chunkResults);
-      sinceRecycle += chunk.length;
-      if (sinceRecycle >= recycleEvery && done < total) {
+    // First pass in generations of `recycleEvery`, recycling between them so
+    // memory stays bounded even over thousands of URLs.
+    for (let genStart = 0; genStart < total; genStart += recycleEvery) {
+      const genEnd = Math.min(genStart + recycleEvery, total);
+      const indices = [];
+      for (let i = genStart; i < genEnd; i++) indices.push(i);
+      await runPool(indices, concurrency, 1);
+
+      if (genEnd < total) {
+        await context.close();
         await browser.close();
         browser = await chromium.launch(launchOpts);
-        userAgent = await realChromeUserAgent(browser);
-        sinceRecycle = 0;
+        ua = await realChromeUserAgent(browser);
+        context = await browser.newContext(ua ? { userAgent: ua } : {});
       }
     }
+
+    // Retry passes: re-check failures at low concurrency to recover the
+    // contention-induced false failures a fast first pass can produce.
+    for (let attempt = 2; attempt <= 1 + retries; attempt++) {
+      const failed = [];
+      for (let i = 0; i < total; i++) if (results[i] && !results[i].ok) failed.push(i);
+      if (!failed.length) break;
+      await runPool(failed, retryConcurrency, attempt);
+    }
   } finally {
-    await browser.close();
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
   }
+  reportProfile();
   return results;
 }

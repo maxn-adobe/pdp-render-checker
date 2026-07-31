@@ -60,6 +60,22 @@ export const config = {
     overflowTolerancePx: 2,
   },
 
+  // 7. PERFORMANCE — parallelism + recycling for large batches.
+  perf: {
+    // First-pass concurrency auto-scales to CPU cores, capped here. The cap is
+    // deliberately modest: too many pages rendering at once starves the browser's
+    // layout engine and causes false failures. Override with CONCURRENCY / the UI.
+    maxConcurrency: 8,
+    // Failed URLs are then re-checked serially (concurrency 1), which is
+    // contention-free — so layout-sensitive checks (e.g. mobile overflow) measure
+    // correctly and transient failures recover, while truly-broken pages stay failed.
+    retries: 1,
+    retryConcurrency: 1,
+    // Pages processed between browser/context recycles (bounds memory on long
+    // batches). Override with RECYCLE_EVERY.
+    recycleEvery: 150,
+  },
+
   // Timeouts (ms). Give the client-side Zazzle call room to return.
   timeouts: {
     navigateMs: 30000,
@@ -69,7 +85,7 @@ export const config = {
     // Bounded wait for every gallery image (hero + thumbnails) to decode; the
     // Zazzle rendering endpoint returns them a few seconds after injection.
     imagesMs: 15000,
-    // Settle time after switching to the mobile viewport before measuring.
-    mobileReflowMs: 600,
+    // Settle time after switching to the mobile viewport before measuring overflow.
+    mobileReflowMs: 400,
   },
 };
