@@ -100,7 +100,7 @@ function passingResult() {
       photos: { present: true, total: 7, decoded: 7, undecoded: [] },
       blocks: { total: 0, broken: [] },
       meta: { hasDescription: true, descriptionOk: true, hasCanonical: true, hasOgTitle: true, hasOgImage: true },
-      mobile: { overflowPx: 0, noOverflow: true, elementsOk: true, missing: [] },
+      mobile: { overflowPx: 0, contentOverflowPx: 0, noOverflow: true, elementsOk: true, missing: [] },
       altText: { total: 7, missing: 0, missingSrcs: [] },
     },
   };
@@ -173,13 +173,21 @@ test("verdicts: a short/duplicated meta description fails meta", () => {
 
 test("verdicts: horizontal overflow fails mobile", () => {
   const r = passingResult();
-  r.checks.mobile = { overflowPx: 40, noOverflow: false, elementsOk: true, missing: [] };
+  r.checks.mobile = { overflowPx: 40, contentOverflowPx: 40, noOverflow: false, elementsOk: true, missing: [] };
   assert.equal(verdicts(r).mobile, false);
+});
+
+test("verdicts: overflow from shared global nav only still passes mobile", () => {
+  const r = passingResult();
+  // Raw page overflow exists (desktop nav overhangs after the resize) but no PDP
+  // content overflows, so the check must pass.
+  r.checks.mobile = { overflowPx: 44, contentOverflowPx: 0, noOverflow: true, elementsOk: true, missing: [] };
+  assert.equal(verdicts(r).mobile, true);
 });
 
 test("verdicts: a missing element at mobile width fails mobile", () => {
   const r = passingResult();
-  r.checks.mobile = { overflowPx: 0, noOverflow: true, elementsOk: false, missing: ["#pdpx-price-label"] };
+  r.checks.mobile = { overflowPx: 0, contentOverflowPx: 0, noOverflow: true, elementsOk: false, missing: ["#pdpx-price-label"] };
   assert.equal(verdicts(r).mobile, false);
 });
 
@@ -221,6 +229,14 @@ test("rowModel: a passing result has 12 ok cells and no notes", () => {
   assert.equal(m.cells.length, 12);
   assert.ok(m.cells.every((c) => c.ok));
   assert.deepEqual(m.notes, []);
+});
+
+test("rowModel: mobile overflow yields a plain-language note", () => {
+  const r = passingResult();
+  r.ok = false;
+  r.checks.mobile = { overflowPx: 44, contentOverflowPx: 44, noOverflow: false, elementsOk: true, missing: [] };
+  const note = rowModel(r).notes.find((n) => n.startsWith("mobile:"));
+  assert.ok(note && note.includes("wider than the phone screen"));
 });
 
 test("rowModel: a leaked placeholder yields an un-ok cell and a note", () => {

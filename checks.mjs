@@ -141,9 +141,9 @@ export function rowModel(result) {
   }
   if (!v.mobile && c.mobile) {
     const bits = [];
-    if (!c.mobile.noOverflow) bits.push(`overflow ${c.mobile.overflowPx}px`);
-    if (c.mobile.missing?.length) bits.push(`missing ${c.mobile.missing.join(",")}`);
-    notes.push(`mobile: ${bits.join(" ")}`);
+    if (!c.mobile.noOverflow) bits.push("content is wider than the phone screen");
+    if (c.mobile.missing?.length) bits.push("some content is missing at phone size");
+    notes.push(`mobile: ${bits.join("; ")}`);
   }
   if (!v.altText && c.altText) notes.push(`alt missing: ${c.altText.missing}`);
   return { url: result?.url, ok: !!(result && result.ok), cells, notes };
