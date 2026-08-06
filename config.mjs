@@ -58,6 +58,12 @@ export const config = {
     width: 390,
     height: 844,
     overflowTolerancePx: 2,
+    // Shared global chrome (Milo nav + footer). After the viewport shrinks from
+    // desktop to phone width the global nav can stay in its desktop layout and
+    // overhang the viewport — that's not a PDP defect, so its overflow is excluded
+    // from the mobile check. Keep in sync with Milo's markup.
+    chromeSelectors:
+      "header.global-navigation, .global-navigation, .feds-topnav, footer.global-footer, .global-footer",
   },
 
   // 7. PERFORMANCE — parallelism + recycling for large batches.

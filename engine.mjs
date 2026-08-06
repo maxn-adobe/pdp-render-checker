@@ -299,7 +299,33 @@ export async function checkPage(context, url, opts = {}) {
     result.checks.mobile = await page.evaluate(
       (cfg) => {
         const de = document.documentElement;
-        const overflowPx = de.scrollWidth - de.clientWidth;
+        const clientWidth = de.clientWidth;
+        // Raw page overflow, kept for diagnostics. The pass/fail below uses only
+        // the overflow attributable to PDP *content*: the shared global nav/footer
+        // (Milo chrome) can stay in its desktop layout after the viewport shrinks
+        // from desktop to phone width and legitimately overhang — that's not a PDP
+        // defect, so it's excluded, along with anything an ancestor clips (clipped
+        // content can't create a page-level horizontal scrollbar).
+        const overflowPx = de.scrollWidth - clientWidth;
+        const clips = (v) => v === "hidden" || v === "clip" || v === "auto" || v === "scroll";
+        let contentOverflowPx = 0;
+        if (overflowPx > cfg.tol) {
+          for (const el of document.querySelectorAll("body *")) {
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            const over = Math.max(r.right - clientWidth, -r.left, 0);
+            if (over <= cfg.tol) continue;
+            if (cfg.chromeSelectors && el.closest(cfg.chromeSelectors)) continue;
+            let clipped = false;
+            for (let p = el.parentElement; p; p = p.parentElement) {
+              const s = getComputedStyle(p);
+              if (clips(s.overflowX) || clips(s.overflowY)) { clipped = true; break; }
+            }
+            if (clipped) continue;
+            if (over > contentOverflowPx) contentOverflowPx = over;
+          }
+        }
+        contentOverflowPx = Math.round(contentOverflowPx);
         const missing = [];
         cfg.core.forEach((s) => {
           const el = document.querySelector(s);
@@ -308,7 +334,8 @@ export async function checkPage(context, url, opts = {}) {
         });
         return {
           overflowPx,
-          noOverflow: overflowPx <= cfg.tol,
+          contentOverflowPx,
+          noOverflow: contentOverflowPx <= cfg.tol,
           elementsOk: missing.length === 0,
           missing,
         };
@@ -316,6 +343,7 @@ export async function checkPage(context, url, opts = {}) {
       {
         tol: config.mobile.overflowTolerancePx,
         core: [config.selectors.h1, config.selectors.hero, config.selectors.price],
+        chromeSelectors: config.mobile.chromeSelectors,
       }
     );
     mark("mobile");
