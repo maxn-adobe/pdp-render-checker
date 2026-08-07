@@ -56,7 +56,7 @@ function startSummary() {
     [
       `## PDP render check`,
       ``,
-      `| Result | URL | H1 | Hero | Price | Buy | {{ }} | Options | Junk | Images | Blocks | Meta | Mobile | Alt | Notes |`,
+      `| Result | URL | H1 | Hero | Price | Buy | Placeholder | Options | Junk | Images | Blocks | Meta | Mobile | Alt | Notes |`,
       `|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|`,
       ``,
     ].join("\n")

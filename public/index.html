@@ -28,7 +28,7 @@
   .msg { padding: 10px 14px; border-radius: 6px; margin: 8px 0; }
   .msg.err { background: #fbe9e7; color: #b3261e; }
   .msg.warn { background: #fff4e5; color: #8a5a00; }
-  table.grid { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  table.grid { border-collapse: collapse; width: max-content; min-width: 100%; font-variant-numeric: tabular-nums; }
   th, td { border-bottom: 1px solid #e2e2e2; padding: 6px 8px; text-align: left; vertical-align: top; }
   th.sortable { cursor: pointer; user-select: none; }
   th.chk, td.chk { text-align: center; }
@@ -42,6 +42,20 @@
   tbody tr:not(.detail) { cursor: pointer; }
   tbody tr:not(.detail):hover { background: rgba(0,0,0,0.04); }
   tr.detail td { background: rgba(0,0,0,0.03); }
+  /* Bounded scroll box so the header can stay pinned while scrolling a long OR
+     wide result set (a horizontal-scroll container also captures vertical, so one
+     box handles both). max-height is tunable. */
+  #app { overflow: auto; max-height: 70vh; }
+  thead { position: sticky; top: 0; z-index: 2; }
+  thead th { background: Canvas; border-bottom: 0; box-shadow: inset 0 -1px 0 #e2e2e2; }
+  th.chk, td.chk { min-width: 64px; }
+  th.chk { white-space: nowrap; padding-left: 12px; padding-right: 12px; }
+  th.chk.has-desc { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+  th.chk.has-desc::after { content: " ?"; color: #1473e6; font-weight: 700; }
+  th.chk.active { box-shadow: inset 0 -2px 0 #1473e6; }
+  thead tr.coldesc td { background: #eef4fe; color: #222; font-weight: 400; white-space: normal;
+    text-align: left; border-bottom: 0; box-shadow: inset 0 -1px 0 #d3e3fb; padding: 8px 10px; }
+  tr.coldesc .cdclose { float: right; cursor: pointer; color: #666; font-weight: 700; padding: 0 4px; }
   .detailwrap { display: flex; gap: 20px; flex-wrap: wrap; padding: 8px 4px; }
   .shot { max-width: 420px; max-height: 320px; border: 1px solid #ccc; border-radius: 6px; }
   .checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; flex: 1; }
@@ -80,12 +94,13 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {} };
+  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {}, columns: [], openCol: null };
 
   // Show which build (CPU architecture) of the bundle is running.
   fetch("/info")
     .then((r) => r.json())
     .then((info) => {
+      state.columns = info.columns || []; // {key,label,description} for header help
       const el = $("build");
       const label =
         info.arch === "arm64" ? "Apple Silicon (arm64)" : info.arch === "x64" ? "Intel (x64)" : info.arch;
@@ -241,8 +256,11 @@
   }
 
   function render() {
-    const cols = state.rows.length ? state.rows[0].cells.map((c) => c.label) : [];
+    const cols = state.rows.length ? state.rows[0].cells.map((c) => ({ key: c.key, label: c.label })) : [];
+    const descByKey = {};
+    state.columns.forEach((c) => { if (c.description) descByKey[c.key] = { label: c.label, description: c.description }; });
     const app = $("app");
+    const prevTop = app.scrollTop, prevLeft = app.scrollLeft; // preserve scroll across the full rebuild
     app.textContent = "";
     const table = el("table", "grid");
     const thead = document.createElement("thead");
@@ -250,9 +268,33 @@
     const thS = el("th", "sortable", "Result"); thS.onclick = () => setSort("status");
     const thU = el("th", "sortable", "URL"); thU.onclick = () => setSort("url");
     htr.appendChild(thS); htr.appendChild(thU);
-    cols.forEach((label) => htr.appendChild(el("th", "chk", label)));
+    cols.forEach(({ key, label }) => {
+      const th = el("th", "chk", label);
+      if (descByKey[key]) {
+        th.classList.add("has-desc");
+        if (state.openCol === key) th.classList.add("active");
+        th.onclick = () => { state.openCol = state.openCol === key ? null : key; render(); };
+      }
+      htr.appendChild(th);
+    });
     htr.appendChild(el("th", null, "Notes"));
-    thead.appendChild(htr); table.appendChild(thead);
+    thead.appendChild(htr);
+    // Clicking a check header reveals its description in a strip inside the sticky
+    // <thead>, so it stays visible while scrolling. One open at a time.
+    if (state.openCol && descByKey[state.openCol]) {
+      const d = descByKey[state.openCol];
+      const dtr = el("tr", "coldesc");
+      const dtd = document.createElement("td");
+      dtd.colSpan = cols.length + 3;
+      const close = el("span", "cdclose", "✕");
+      close.onclick = () => { state.openCol = null; render(); };
+      dtd.appendChild(close);
+      dtd.appendChild(el("strong", null, d.label + ": "));
+      dtd.appendChild(document.createTextNode(d.description));
+      dtr.appendChild(dtd);
+      thead.appendChild(dtr);
+    }
+    table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
     for (const r of visibleRows()) {
@@ -276,6 +318,7 @@
     }
     table.appendChild(tbody);
     app.appendChild(table);
+    app.scrollTop = prevTop; app.scrollLeft = prevLeft; // restore scroll after the rebuild
   }
 })();
 </script>
