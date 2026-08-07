@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.mjs";
-import { parseUrls, rowModel } from "./checks.mjs";
+import { parseUrls, rowModel, CHECK_COLUMNS } from "./checks.mjs";
 import { runChecks, autoConcurrency } from "./engine.mjs";
 import { buildXlsx, buildCsv, buildHtmlReport } from "./report.mjs";
 
@@ -207,6 +207,9 @@ const server = http.createServer(async (req, res) => {
           node: process.version,
           defaultConcurrency: Number(process.env.CONCURRENCY) || autoConcurrency(),
           maxConcurrency: config.perf.maxConcurrency,
+          // Column metadata (key/label/description) so the UI can render headers
+          // and the click-to-explain descriptions without per-row payload bloat.
+          columns: CHECK_COLUMNS,
         })
       );
     }

@@ -101,20 +101,22 @@ export function parseUrls(text) {
 }
 
 // Ordered check columns — the single source of truth for every output format
-// (Action markdown table, XLSX, HTML report). Keys match verdicts().
+// (Action markdown table, XLSX, HTML report). Keys match verdicts(); each
+// `description` is a plain-language explanation the local web app surfaces when a
+// user clicks a column header.
 export const CHECK_COLUMNS = [
-  { key: "h1", label: "H1" },
-  { key: "hero", label: "Hero" },
-  { key: "price", label: "Price" },
-  { key: "buy", label: "Buy" },
-  { key: "placeholders", label: "{{ }}" },
-  { key: "options", label: "Options" },
-  { key: "noJunk", label: "Junk" },
-  { key: "photos", label: "Images" },
-  { key: "blocks", label: "Blocks" },
-  { key: "meta", label: "Meta" },
-  { key: "mobile", label: "Mobile" },
-  { key: "altText", label: "Alt" },
+  { key: "h1", label: "H1", description: "The product title heading is present and not empty." },
+  { key: "hero", label: "Hero", description: "The main product image is present and actually renders." },
+  { key: "price", label: "Price", description: "A real, non-zero price is shown (fails on a blank or $0.00 price)." },
+  { key: "buy", label: "Buy", description: "The buy button links to the correct Adobe Express template for this product." },
+  { key: "placeholders", label: "Placeholder", description: "No unfilled template tags (the {{ }} placeholders) leaked onto the page." },
+  { key: "options", label: "Options", description: "Product options (size, finish, etc.) show real selected values, not blanks or defaults." },
+  { key: "noJunk", label: "Junk", description: "No junk values such as null, undefined, or none appear in the content." },
+  { key: "photos", label: "Images", description: "Every gallery photo finished loading — none broken or blank." },
+  { key: "blocks", label: "Blocks", description: "All page sections rendered without an error or empty state." },
+  { key: "meta", label: "Meta", description: "Required meta tags are present: description, canonical, and social-share (og) tags." },
+  { key: "mobile", label: "Mobile", description: "At phone width, the page content fits with no sideways scrolling." },
+  { key: "altText", label: "Alt", description: "Every product image has descriptive alt text for accessibility." },
 ];
 
 // Normalize one result into a render-ready row: per-column pass/fail plus the
