@@ -10,6 +10,24 @@ import {
   parseUrls,
   rowModel,
 } from "../checks.mjs";
+import { config } from "../config.mjs";
+
+test("allowedHostPattern: accepts aem.page/live, stage, and prod express hosts; rejects others", () => {
+  const ok = [
+    "https://main--da-express-milo--adobecom.aem.page/express/print/business-card/x",
+    "https://main--da-express-milo--adobecom.aem.live/express/print/x",
+    "https://www.stage.adobe.com/express/print/business-card/x",
+    "https://www.adobe.com/express/print/x",
+  ];
+  const no = [
+    "https://www.stage.adobe.com/photoshop/x", // right host, wrong path
+    "https://evil.com/express/x",              // wrong host
+    "https://www.adobe.com/creativecloud/x",   // wrong path
+    "http://www.stage.adobe.com/express/x",    // must be https
+  ];
+  for (const u of ok) assert.ok(config.allowedHostPattern.test(u), `should allow ${u}`);
+  for (const u of no) assert.equal(config.allowedHostPattern.test(u), false, `should reject ${u}`);
+});
 
 test("looksLikePrice: accepts real currency strings (any locale)", () => {
   assert.ok(looksLikePrice("$23.15"));
