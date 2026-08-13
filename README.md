@@ -43,8 +43,10 @@ validated upstream before page generation).
 - Checks against every URL in one run, in parallel (bounded concurrency).
 
 Accepted URL formats: the staging `https://<branch>--da-express-milo--adobecom.aem.(live|page)/...`
-domain, and the production `https://www.adobe.com/express/...` domain (same
-EDS-served content). See `allowedHostPattern` in `config.mjs`.
+domain, the VPN-gated stage host `https://www.stage.adobe.com/express/...` (the same content as
+`.aem.page`, reachable over VPN instead of the AEM Sidekick — the simplest way to validate preview
+pages), and the production `https://www.adobe.com/express/...` domain (all same EDS-served content).
+See `allowedHostPattern` in `config.mjs`.
 
 ## Running it
 
