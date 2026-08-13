@@ -80,9 +80,31 @@ Unit tests: `npm test` (32, pure logic). Verified against live business-card PDP
   so "points at the right Zazzle product" can't be validated from the DOM — we validate the
   Express template URN instead.
 - Longer-term (original roadmap): DA-tool integration (post results back / `repository_dispatch`),
-  `.aem.page` pre-publish validation (needs preview auth in the browser context), an Ethos
-  container for a synchronous endpoint, richer/persisted reporting + regression alerting, and
-  per-product-type sampling for very large sweeps.
+  an Ethos container for a synchronous endpoint, richer/persisted reporting + regression alerting,
+  and per-product-type sampling for very large sweeps.
+- **Pre-publish preview validation** now works via the VPN-gated stage host
+  (`www.stage.adobe.com/express/…`, allowlisted). Deeper in-tool auth for the raw `.aem.page`
+  host is parked on `feature-preview-auth` — see below.
+
+## Parked work / branches (not on `main`)
+
+Unmerged branches kept as records; resurrect if a need returns.
+
+- **`feature-preview-auth`** — authenticating the tool to gated `.aem.page` preview pages.
+  **Superseded** by the stage-URL workaround shipped on `main`, but kept because the investigation
+  was substantial:
+  - **Key finding:** `.aem.page` content auth is an **`Authorization: token <siteToken>` request
+    header** that the AEM Sidekick injects browser-wide via `declarativeNetRequest`. The `siteToken`
+    is transient and delivered only through the Sidekick's extension OAuth.
+  - **Option C (site token):** paste a configured `hlx_…` token; the engine adds the header only to
+    the project's content hosts. Implemented; needs a token issued for the site.
+  - **Option A (CDP attach):** connect to the user's Sidekick-signed-in Chrome
+    (`--remote-debugging-port`) and run in its existing context. Implemented.
+  - **Option B (headless auto-fetch of the token):** proven **infeasible** (extension-only).
+  - **Option D (Sidekick loaded into a headed tool window):** designed, not built.
+  - Full analysis + exact edit points are in `PREVIEW-AUTH.md` on that branch.
+- **`fix-mobile-overflow-nav`** (PR #8) and **`feature-table-ui-improvements`** (PR #9) — separate
+  still-open feature PRs (mobile-overflow false-positive fix; results-table UX), unrelated to auth.
 
 ## Quick reference
 
