@@ -26,6 +26,10 @@
   .downloads button { font: inherit; font-weight: 600; padding: 6px 12px; border: 1px solid #1473e6; border-radius: 6px; color: #1473e6; background: transparent; cursor: pointer; }
   .downloads button:disabled { opacity: 0.45; cursor: default; }
   .hint { color: #888; padding: 14px 4px; }
+  #checksPanel .checkbtns { display: flex; gap: 10px; margin-bottom: 8px; }
+  #checksPanel .checkbtns button { font: inherit; font-weight: 500; padding: 4px 10px; border: 1px solid #ccc; border-radius: 6px; background: transparent; color: #1473e6; cursor: pointer; }
+  #checksPanel .checkgrid { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  #checksPanel .checkgrid label { color: #333; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
   .filters { display: flex; gap: 16px; align-items: center; margin: 8px 0; }
   .filters[hidden] { display: none; } /* author display:flex would otherwise defeat the [hidden] attribute */
   .filters input[type="search"] { padding: 6px 10px; min-width: 260px; border: 1px solid #ccc; border-radius: 6px; }
@@ -83,6 +87,15 @@
     </div>
   </fieldset>
 
+  <fieldset id="checksPanel" hidden>
+    <legend>Checks to run</legend>
+    <div class="checkbtns">
+      <button type="button" id="checksAll">Select all</button>
+      <button type="button" id="checksNone">Clear all</button>
+    </div>
+    <div class="checkgrid" id="checkgrid"></div>
+  </fieldset>
+
   <div id="status" hidden>
     <div class="bar"><progress id="progress" value="0" max="1"></progress><span id="progressText"></span></div>
     <div id="messages"></div>
@@ -103,7 +116,7 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {}, columns: [], openCol: null, artifacts: {} };
+  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {}, columns: [], openCol: null, artifacts: {}, selected: null, running: false };
 
   // Show which build (CPU architecture) of the bundle is running.
   fetch("/info")
@@ -116,7 +129,10 @@
       el.textContent = label;
       el.hidden = false;
       if (info.defaultConcurrency) $("concurrency").value = info.defaultConcurrency;
-      render(); // show the full column header (empty body) as soon as columns are known
+      initSelected();
+      buildChecksPanel();
+      syncRunEnabled();
+      render(); // show the selected column headers (empty body) as soon as columns are known
     })
     .catch(() => { render(); }); // still show the scaffold if /info fails
 
@@ -156,9 +172,54 @@
     DL_BTNS.csv.disabled = !state.artifacts.csv;
   }
 
+  // ---- Per-check selection ("Checks to run" panel) ----
+  // state.selected is a Set of column keys (null until /info resolves), persisted
+  // to localStorage so a chosen subset survives reloads.
+  function initSelected() {
+    const all = state.columns.map((c) => c.key);
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem("pdpChecks") || "null"); } catch {}
+    const valid = Array.isArray(saved) ? saved.filter((k) => all.includes(k)) : null;
+    state.selected = new Set(valid && valid.length ? valid : all);
+  }
+  function persistSelected() {
+    try { localStorage.setItem("pdpChecks", JSON.stringify([...state.selected])); } catch {}
+  }
+  function syncRunEnabled() {
+    // Run is disabled while a run is in flight, or when nothing is selected.
+    $("run").disabled = state.running || !state.selected || state.selected.size === 0;
+  }
+  function buildChecksPanel() {
+    const grid = $("checkgrid");
+    grid.textContent = "";
+    state.columns.forEach((c) => {
+      const label = el("label");
+      if (c.description) label.title = c.description;
+      const cb = el("input");
+      cb.type = "checkbox"; cb.value = c.key; cb.checked = state.selected.has(c.key);
+      cb.addEventListener("change", () => {
+        if (cb.checked) state.selected.add(c.key); else state.selected.delete(c.key);
+        persistSelected(); syncRunEnabled(); render();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(" " + c.label));
+      grid.appendChild(label);
+    });
+    $("checksPanel").hidden = state.columns.length === 0;
+  }
+  function setAllChecks(on) {
+    state.selected = new Set(on ? state.columns.map((c) => c.key) : []);
+    $("checkgrid").querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.checked = on; });
+    persistSelected(); syncRunEnabled(); render();
+  }
+  $("checksAll").addEventListener("click", () => setAllChecks(true));
+  $("checksNone").addEventListener("click", () => setAllChecks(false));
+
   async function start() {
     const urls = $("urls").value.trim();
     if (!urls) return;
+    if (!state.selected || state.selected.size === 0) return; // nothing selected to run
+    state.running = true;
     // reset
     state.rows = []; state.open = {}; state.sortKey = "_i"; state.dir = 1;
     $("status").hidden = false;
@@ -176,7 +237,7 @@
       resp = await fetch("/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, concurrency: Number($("concurrency").value) || 3 }),
+        body: JSON.stringify({ urls, concurrency: Number($("concurrency").value) || 3, checks: [...state.selected] }),
       });
     } catch (err) {
       return fail("Could not reach the local server.");
@@ -204,7 +265,8 @@
     es.addEventListener("done", (ev) => {
       const { passed, total, artifacts, failed } = JSON.parse(ev.data);
       es.close();
-      $("run").disabled = false;
+      state.running = false;
+      syncRunEnabled();
       $("progressText").textContent = `${total} / ${total}`;
       $("summary").textContent = `${passed} / ${total} passed`;
       $("filters").hidden = false;
@@ -218,7 +280,6 @@
     });
     es.addEventListener("error", (ev) => {
       es.close();
-      $("run").disabled = false;
       let message = "The run stopped unexpectedly.";
       try { message = JSON.parse(ev.data).message || message; } catch {}
       fail(message);
@@ -233,7 +294,8 @@
   }
 
   function fail(message) {
-    $("run").disabled = false;
+    state.running = false;
+    syncRunEnabled();
     $("messages").appendChild(el("div", "msg err", message));
   }
 
@@ -290,7 +352,7 @@
   function render() {
     const cols = state.rows.length
       ? state.rows[0].cells.map((c) => ({ key: c.key, label: c.label }))
-      : state.columns.map((c) => ({ key: c.key, label: c.label }));
+      : state.columns.filter((c) => !state.selected || state.selected.has(c.key)).map((c) => ({ key: c.key, label: c.label }));
     const descByKey = {};
     state.columns.forEach((c) => { if (c.description) descByKey[c.key] = { label: c.label, description: c.description }; });
     const app = $("app");

@@ -24,6 +24,13 @@ test("buildCsv: header + one PASS/FAIL row per result", () => {
   assert.ok(lines[2].startsWith("FAIL,https://ex/2,"));
 });
 
+test("buildCsv: honors a column subset (header + rows show only selected checks)", () => {
+  const csv = buildCsv(sample(), ["h1", "price"]);
+  const header = csv.split("\n")[0];
+  assert.equal(header, "Result,URL,H1,Price,Notes"); // only the two selected check columns
+  assert.equal(csv.split("\n").length, 3); // header + 2 rows, unchanged
+});
+
 test("buildCsv: neutralizes spreadsheet formula-injection prefixes", () => {
   const csv = buildCsv([
     { url: "https://ex/1", ok: false, checks: {}, errors: ["=cmd|calc"] },

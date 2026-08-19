@@ -2,7 +2,7 @@
 // usable anywhere). All three reuse rowModel/CHECK_COLUMNS from checks.mjs so
 // the columns and failure notes stay identical to the Action's markdown table.
 import ExcelJS from "exceljs";
-import { CHECK_COLUMNS, rowModel } from "./checks.mjs";
+import { CHECK_COLUMNS, rowModel, selectedColumns } from "./checks.mjs";
 import { config } from "./config.mjs";
 
 const FILL_GREEN = "FFDDF5DD";
@@ -11,13 +11,14 @@ const FILL_HEAD = "FFEDEDED";
 
 // Color-coded XLSX: a "Summary" sheet (row per URL, pass/fail cells) plus a
 // "Details" sheet with every check sub-field flattened. Returns a Buffer.
-export async function buildXlsx(results) {
+export async function buildXlsx(results, enabled) {
   const wb = new ExcelJS.Workbook();
   wb.creator = "pdp-render-checker";
   wb.created = new Date();
 
   const ws = wb.addWorksheet("Summary", { views: [{ state: "frozen", ySplit: 1 }] });
-  const headers = ["Result", "URL", ...CHECK_COLUMNS.map((c) => c.label), "Notes"];
+  const cols = selectedColumns(enabled);
+  const headers = ["Result", "URL", ...cols.map((c) => c.label), "Notes"];
   const headRow = ws.addRow(headers);
   headRow.font = { bold: true };
   headRow.eachCell((cell) => {
@@ -32,7 +33,7 @@ export async function buildXlsx(results) {
     };
   };
   for (const r of results) {
-    const m = rowModel(r);
+    const m = rowModel(r, enabled);
     const row = ws.addRow([
       m.ok ? "PASS" : "FAIL",
       m.url,
@@ -45,7 +46,7 @@ export async function buildXlsx(results) {
 
   ws.getColumn(1).width = 8;
   ws.getColumn(2).width = 72;
-  CHECK_COLUMNS.forEach((c, i) => (ws.getColumn(3 + i).width = Math.max(6, c.label.length + 2)));
+  cols.forEach((c, i) => (ws.getColumn(3 + i).width = Math.max(6, c.label.length + 2)));
   ws.getColumn(headers.length).width = 48;
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
 
@@ -69,7 +70,7 @@ export async function buildXlsx(results) {
 }
 
 // Lightweight CSV (no dependency) with the same columns as the XLSX summary.
-export function buildCsv(results) {
+export function buildCsv(results, enabled) {
   const esc = (s) => {
     let v = String(s == null ? "" : s);
     // Neutralize spreadsheet formula injection: a cell starting with =, +, -, @
@@ -77,9 +78,9 @@ export function buildCsv(results) {
     if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
     return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
   };
-  const lines = [["Result", "URL", ...CHECK_COLUMNS.map((c) => c.label), "Notes"].map(esc).join(",")];
+  const lines = [["Result", "URL", ...selectedColumns(enabled).map((c) => c.label), "Notes"].map(esc).join(",")];
   for (const r of results) {
-    const m = rowModel(r);
+    const m = rowModel(r, enabled);
     lines.push(
       [m.ok ? "PASS" : "FAIL", m.url, ...m.cells.map((c) => (c.ok ? "PASS" : "FAIL")), m.notes.join("; ")]
         .map(esc)
@@ -237,7 +238,7 @@ const REPORT_CLIENT_JS = `
 `;
 
 // Self-contained interactive HTML report string (embeds results + screenshots).
-export function buildHtmlReport(results) {
+export function buildHtmlReport(results, enabled) {
   // Screenshots (base64) dominate the embedded payload; above a threshold the
   // combined JSON can exceed V8's max string length and throw. Drop them for
   // large runs — the table, notes, and drill-down fields still render; only the
@@ -245,7 +246,7 @@ export function buildHtmlReport(results) {
   const shotCount = results.reduce((n, r) => (r && r.screenshot ? n + 1 : n), 0);
   const dropShots = shotCount > config.report.maxInlineScreenshots;
   const rows = results.map((r) => {
-    const m = rowModel(r);
+    const m = rowModel(r, enabled);
     return { url: m.url, ok: m.ok, cells: m.cells, notes: m.notes, checks: r.checks || {}, screenshot: dropShots ? null : (r.screenshot || null) };
   });
   const passed = rows.filter((r) => r.ok).length;

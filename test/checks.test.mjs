@@ -9,6 +9,8 @@ import {
   verdicts,
   parseUrls,
   rowModel,
+  selectedColumns,
+  CHECK_COLUMNS,
 } from "../checks.mjs";
 import { config } from "../config.mjs";
 
@@ -292,4 +294,19 @@ test("rowModel: errors pass through to notes", () => {
   const m = rowModel({ url: "u", ok: false, checks: {}, errors: ["url-not-allowed"] });
   assert.ok(m.notes.includes("url-not-allowed"));
   assert.equal(m.url, "u");
+});
+
+// ---- selectedColumns / per-check subset ----
+test("selectedColumns: falsy = all; a subset filters to those keys in canonical order", () => {
+  assert.equal(selectedColumns(null), CHECK_COLUMNS);
+  assert.equal(selectedColumns().length, CHECK_COLUMNS.length);
+  assert.deepEqual(selectedColumns(["price", "h1"]).map((c) => c.key), ["h1", "price"]); // canonical order preserved
+  assert.deepEqual(selectedColumns(new Set(["productDetails"])).map((c) => c.key), ["productDetails"]);
+});
+
+test("rowModel: an enabled subset yields only those cells (skipped checks omitted)", () => {
+  const r = passingResult();
+  const m = rowModel(r, ["h1", "price"]);
+  assert.deepEqual(m.cells.map((c) => c.key), ["h1", "price"]);
+  assert.ok(m.cells.every((c) => c.ok));
 });

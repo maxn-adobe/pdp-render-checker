@@ -33,8 +33,8 @@ function sse(res, event, data) {
 
 // Ready-to-render row for the live UI: pass/fail cells + notes (from rowModel)
 // plus the raw checks and screenshot for the drill-down panel.
-function toView(r) {
-  const m = rowModel(r);
+function toView(r, enabled) {
+  const m = rowModel(r, enabled);
   return { url: m.url, ok: m.ok, cells: m.cells, notes: m.notes, checks: r.checks || {}, screenshot: r.screenshot || null };
 }
 
@@ -54,28 +54,28 @@ function readBody(req) {
 // run exhausting memory in the XLSX/HTML builder) never loses the others or
 // strands the run without a terminal event. Returns the artifacts that were
 // actually written plus the names that failed.
-async function generateArtifacts(runId, results) {
+async function generateArtifacts(runId, results, enabled) {
   const dir = path.join(RUNS, runId);
   fs.mkdirSync(dir, { recursive: true });
   const artifacts = {};
   const failed = [];
   // CSV first: cheapest, carries no screenshots, and the most-requested export.
   try {
-    fs.writeFileSync(path.join(dir, "report.csv"), buildCsv(results));
+    fs.writeFileSync(path.join(dir, "report.csv"), buildCsv(results, enabled));
     artifacts.csv = `/download/${runId}/report.csv`;
   } catch (e) {
     failed.push("csv");
     console.error(`[pdp] csv build failed for ${runId}:`, e);
   }
   try {
-    fs.writeFileSync(path.join(dir, "report.html"), buildHtmlReport(results));
+    fs.writeFileSync(path.join(dir, "report.html"), buildHtmlReport(results, enabled));
     artifacts.html = `/download/${runId}/report.html`;
   } catch (e) {
     failed.push("html");
     console.error(`[pdp] html build failed for ${runId}:`, e);
   }
   try {
-    fs.writeFileSync(path.join(dir, "report.xlsx"), await buildXlsx(results));
+    fs.writeFileSync(path.join(dir, "report.xlsx"), await buildXlsx(results, enabled));
     artifacts.xlsx = `/download/${runId}/report.xlsx`;
   } catch (e) {
     failed.push("xlsx");
@@ -84,17 +84,17 @@ async function generateArtifacts(runId, results) {
   return { artifacts, failed };
 }
 
-function startRun(urls, concurrency) {
+function startRun(urls, concurrency, enabledChecks) {
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
-  const run = { results: [], total: urls.length, done: false, error: null, artifacts: null, artifactsFailed: null, listeners: new Set() };
+  const run = { results: [], total: urls.length, done: false, error: null, artifacts: null, artifactsFailed: null, enabled: enabledChecks, listeners: new Set() };
   runs.set(runId, run);
 
   (async () => {
     const onResult = (r, { index, done, total, attempt }) => {
       run.results[index] = r;
-      for (const res of run.listeners) sse(res, "result", { r: toView(r), index, done, total, attempt });
+      for (const res of run.listeners) sse(res, "result", { r: toView(r, enabledChecks), index, done, total, attempt });
     };
-    const opts = { urls, concurrency, captureScreenshotOnFailure: true, onResult };
+    const opts = { urls, concurrency, enabledChecks, captureScreenshotOnFailure: true, onResult };
     let results;
     try {
       results = await runChecks({ ...opts, browserChannel: CHANNEL || undefined });
@@ -121,7 +121,7 @@ function startRun(urls, concurrency) {
       return;
     }
 
-    const { artifacts, failed } = await generateArtifacts(runId, results);
+    const { artifacts, failed } = await generateArtifacts(runId, results, enabledChecks);
     run.artifacts = artifacts;
     run.artifactsFailed = failed;
     run.done = true;
@@ -173,7 +173,18 @@ async function handleRun(req, res) {
   // Blank = let the engine auto-scale to the machine; an explicit value is
   // clamped to a sane hard limit (the retry pass recovers over-parallelized runs).
   const concurrency = data.concurrency ? Math.max(1, Math.min(24, Number(data.concurrency))) : undefined;
-  const runId = startRun(allowed, concurrency);
+  // Optional per-check subset (column keys). Omitted → all checks. Provided but
+  // empty/all-invalid → 400 (the UI disables Run when nothing is selected).
+  let enabledChecks;
+  if (Array.isArray(data.checks)) {
+    const valid = new Set(CHECK_COLUMNS.map((c) => c.key));
+    enabledChecks = data.checks.filter((k) => valid.has(k));
+    if (!enabledChecks.length) {
+      res.writeHead(400, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ error: "Select at least one check." }));
+    }
+  }
+  const runId = startRun(allowed, concurrency, enabledChecks);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ runId, total: allowed.length, skipped }));
 }
@@ -191,7 +202,7 @@ function handleProgress(req, res, runId) {
   });
   // Replay anything already collected (client may connect after results start).
   run.results.forEach((r, i) => {
-    if (r) sse(res, "result", { r: toView(r), index: i, done: i + 1, total: run.total, attempt: 1 });
+    if (r) sse(res, "result", { r: toView(r, run.enabled), index: i, done: i + 1, total: run.total, attempt: 1 });
   });
   if (run.done) {
     if (run.error) sse(res, "error", { message: run.error });

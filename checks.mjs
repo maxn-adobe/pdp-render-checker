@@ -122,13 +122,22 @@ export const CHECK_COLUMNS = [
   { key: "productDetails", label: "Product Details", description: "The Product Details section is present and lists at least one item (its accordion isn't empty)." },
 ];
 
+// The columns for a run: `enabled` is a Set/array of column keys, or falsy for
+// all. Single source of truth for "which columns" — shared by rowModel, the
+// report builders, and the engine's default (run every check).
+export function selectedColumns(enabled) {
+  if (!enabled) return CHECK_COLUMNS;
+  const set = enabled instanceof Set ? enabled : new Set(enabled);
+  return CHECK_COLUMNS.filter((c) => set.has(c.key));
+}
+
 // Normalize one result into a render-ready row: per-column pass/fail plus the
 // human-readable failure notes. Consumed by all three output formatters so the
 // column set and notes stay identical across markdown, XLSX, and HTML.
-export function rowModel(result) {
+export function rowModel(result, enabled) {
   const v = verdicts(result);
   const c = (result && result.checks) || {};
-  const cells = CHECK_COLUMNS.map((col) => ({ key: col.key, label: col.label, ok: !!v[col.key] }));
+  const cells = selectedColumns(enabled).map((col) => ({ key: col.key, label: col.label, ok: !!v[col.key] }));
   const notes = [...((result && result.errors) || [])];
   if (!v.placeholders && c.noPlaceholders?.samples?.length) notes.push(`placeholders: ${c.noPlaceholders.samples.join(" ")}`);
   if (!v.noJunk && c.noJunk?.samples?.length) notes.push(`junk: ${c.noJunk.samples.join(" ")}`);
