@@ -83,6 +83,16 @@ export const config = {
     recycleEvery: 150,
   },
 
+  // 8. REPORT — output-size guards for the local web app's downloadable reports.
+  report: {
+    // The interactive HTML report inlines each failed page's screenshot as a
+    // base64 data URL. On very large runs (thousands of failures) the combined
+    // JSON can exceed V8's max string length and crash the build, so above this
+    // many screenshots they're omitted from the HTML (the table/notes still
+    // render; only the drill-down images drop). CSV/XLSX are unaffected.
+    maxInlineScreenshots: 750,
+  },
+
   // Timeouts (ms). Give the client-side Zazzle call room to return.
   timeouts: {
     navigateMs: 30000,

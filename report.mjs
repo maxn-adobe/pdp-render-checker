@@ -3,6 +3,7 @@
 // the columns and failure notes stay identical to the Action's markdown table.
 import ExcelJS from "exceljs";
 import { CHECK_COLUMNS, rowModel } from "./checks.mjs";
+import { config } from "./config.mjs";
 
 const FILL_GREEN = "FFDDF5DD";
 const FILL_RED = "FFF8D7DA";
@@ -237,13 +238,20 @@ const REPORT_CLIENT_JS = `
 
 // Self-contained interactive HTML report string (embeds results + screenshots).
 export function buildHtmlReport(results) {
+  // Screenshots (base64) dominate the embedded payload; above a threshold the
+  // combined JSON can exceed V8's max string length and throw. Drop them for
+  // large runs — the table, notes, and drill-down fields still render; only the
+  // drill-down images go missing.
+  const shotCount = results.reduce((n, r) => (r && r.screenshot ? n + 1 : n), 0);
+  const dropShots = shotCount > config.report.maxInlineScreenshots;
   const rows = results.map((r) => {
     const m = rowModel(r);
-    return { url: m.url, ok: m.ok, cells: m.cells, notes: m.notes, checks: r.checks || {}, screenshot: r.screenshot || null };
+    return { url: m.url, ok: m.ok, cells: m.cells, notes: m.notes, checks: r.checks || {}, screenshot: dropShots ? null : (r.screenshot || null) };
   });
   const passed = rows.filter((r) => r.ok).length;
   const total = rows.length;
   const generatedAt = new Date().toISOString();
+  const shotsNote = dropShots ? ` &middot; screenshots omitted (${shotCount} > ${config.report.maxInlineScreenshots})` : "";
   // Escape "<" so an embedded "</script>" or "<" in page data can't break out.
   const dataJson = JSON.stringify({ rows }).replace(/</g, "\\u003c");
   return `<!doctype html>
@@ -257,7 +265,7 @@ export function buildHtmlReport(results) {
 <body>
 <header>
   <h1>PDP render check</h1>
-  <p class="stats"><strong>${passed}/${total}</strong> passed &middot; generated ${generatedAt}</p>
+  <p class="stats"><strong>${passed}/${total}</strong> passed &middot; generated ${generatedAt}${shotsNote}</p>
 </header>
 <div class="controls">
   <input id="q" type="search" placeholder="Filter by URL…" autocomplete="off">

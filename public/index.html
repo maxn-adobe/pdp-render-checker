@@ -22,8 +22,12 @@
   .bar { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
   progress { flex: 1; height: 10px; }
   .summary { font-weight: 600; }
-  .downloads a { display: inline-block; margin-right: 10px; padding: 6px 12px; border: 1px solid #1473e6; border-radius: 6px; color: #1473e6; text-decoration: none; }
+  .downloads { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+  .downloads button { font: inherit; font-weight: 600; padding: 6px 12px; border: 1px solid #1473e6; border-radius: 6px; color: #1473e6; background: transparent; cursor: pointer; }
+  .downloads button:disabled { opacity: 0.45; cursor: default; }
+  .hint { color: #888; padding: 14px 4px; }
   .filters { display: flex; gap: 16px; align-items: center; margin: 8px 0; }
+  .filters[hidden] { display: none; } /* author display:flex would otherwise defeat the [hidden] attribute */
   .filters input[type="search"] { padding: 6px 10px; min-width: 260px; border: 1px solid #ccc; border-radius: 6px; }
   .msg { padding: 10px 14px; border-radius: 6px; margin: 8px 0; }
   .msg.err { background: #fbe9e7; color: #b3261e; }
@@ -83,18 +87,23 @@
     <div class="bar"><progress id="progress" value="0" max="1"></progress><span id="progressText"></span></div>
     <div id="messages"></div>
     <div class="summary" id="summary"></div>
-    <div class="downloads" id="downloads"></div>
-    <div class="filters" id="filters" hidden>
-      <input id="q" type="search" placeholder="Filter by URL…" autocomplete="off" />
-      <label><input id="failOnly" type="checkbox" /> Failures only</label>
-    </div>
-    <div id="app"></div>
   </div>
+
+  <div class="downloads" id="downloads">
+    <button id="dlHtml" type="button" disabled>Open HTML report</button>
+    <button id="dlXlsx" type="button" disabled>Download XLSX</button>
+    <button id="dlCsv" type="button" disabled>Download CSV</button>
+  </div>
+  <div class="filters" id="filters" hidden>
+    <input id="q" type="search" placeholder="Filter by URL…" autocomplete="off" />
+    <label><input id="failOnly" type="checkbox" /> Failures only</label>
+  </div>
+  <div id="app"></div>
 
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {}, columns: [], openCol: null };
+  const state = { rows: [], sortKey: "_i", dir: 1, q: "", failOnly: false, open: {}, columns: [], openCol: null, artifacts: {} };
 
   // Show which build (CPU architecture) of the bundle is running.
   fetch("/info")
@@ -107,8 +116,9 @@
       el.textContent = label;
       el.hidden = false;
       if (info.defaultConcurrency) $("concurrency").value = info.defaultConcurrency;
+      render(); // show the full column header (empty body) as soon as columns are known
     })
-    .catch(() => {});
+    .catch(() => { render(); }); // still show the scaffold if /info fails
 
   $("file").addEventListener("change", async (e) => {
     const f = e.target.files[0];
@@ -126,6 +136,26 @@
     return e;
   }
 
+  // Download buttons are visible up-front and enabled per-artifact once a run
+  // completes. Artifact URLs are same-origin server paths (/download/<runId>/…).
+  const DL_BTNS = { html: $("dlHtml"), xlsx: $("dlXlsx"), csv: $("dlCsv") };
+  function triggerDownload(url) {
+    // The server sends content-disposition: attachment, so this downloads the
+    // file without navigating away from the app.
+    const a = document.createElement("a");
+    a.href = url; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  DL_BTNS.html.addEventListener("click", () => { if (state.artifacts.html) window.open(state.artifacts.html, "_blank", "noopener"); });
+  DL_BTNS.xlsx.addEventListener("click", () => { if (state.artifacts.xlsx) triggerDownload(state.artifacts.xlsx); });
+  DL_BTNS.csv.addEventListener("click", () => { if (state.artifacts.csv) triggerDownload(state.artifacts.csv); });
+  function setDownloads(artifacts) {
+    state.artifacts = artifacts || {};
+    DL_BTNS.html.disabled = !state.artifacts.html;
+    DL_BTNS.xlsx.disabled = !state.artifacts.xlsx;
+    DL_BTNS.csv.disabled = !state.artifacts.csv;
+  }
+
   async function start() {
     const urls = $("urls").value.trim();
     if (!urls) return;
@@ -134,12 +164,12 @@
     $("status").hidden = false;
     $("messages").textContent = "";
     $("summary").textContent = "";
-    $("downloads").textContent = "";
+    setDownloads({}); // disable the download buttons until this run completes
     $("filters").hidden = true;
-    $("app").textContent = "";
     $("run").disabled = true;
     $("progress").value = 0; $("progress").max = 1;
     $("progressText").textContent = "Starting…";
+    render(); // clear the table body but keep the column headers visible
 
     let resp;
     try {
@@ -166,22 +196,24 @@
       const { r, index, done, total } = JSON.parse(ev.data);
       r._i = index;
       state.rows[index] = r; // index-keyed upsert (retry-recovered rows update in place)
+      $("filters").hidden = false; // reveal filters once there are rows to filter
       $("progress").value = done; $("progress").max = total;
       $("progressText").textContent = `${done} / ${total}`;
       render();
     });
     es.addEventListener("done", (ev) => {
-      const { passed, total, artifacts } = JSON.parse(ev.data);
+      const { passed, total, artifacts, failed } = JSON.parse(ev.data);
       es.close();
       $("run").disabled = false;
       $("progressText").textContent = `${total} / ${total}`;
       $("summary").textContent = `${passed} / ${total} passed`;
       $("filters").hidden = false;
-      const dl = $("downloads");
-      dl.textContent = "";
-      dl.appendChild(link(artifacts.html, "Open HTML report", true));
-      dl.appendChild(link(artifacts.xlsx, "Download XLSX"));
-      dl.appendChild(link(artifacts.csv, "Download CSV"));
+      setDownloads(artifacts);
+      if (failed && failed.length) {
+        $("messages").appendChild(
+          el("div", "msg warn", `Could not generate: ${failed.join(", ")}. The other reports are available above.`)
+        );
+      }
       render();
     });
     es.addEventListener("error", (ev) => {
@@ -256,7 +288,9 @@
   }
 
   function render() {
-    const cols = state.rows.length ? state.rows[0].cells.map((c) => ({ key: c.key, label: c.label })) : [];
+    const cols = state.rows.length
+      ? state.rows[0].cells.map((c) => ({ key: c.key, label: c.label }))
+      : state.columns.map((c) => ({ key: c.key, label: c.label }));
     const descByKey = {};
     state.columns.forEach((c) => { if (c.description) descByKey[c.key] = { label: c.label, description: c.description }; });
     const app = $("app");
@@ -318,6 +352,7 @@
     }
     table.appendChild(tbody);
     app.appendChild(table);
+    if (!state.rows.length) app.appendChild(el("p", "hint", "No results yet — paste URLs above and click Run checks."));
     app.scrollTop = prevTop; app.scrollLeft = prevLeft; // restore scroll after the rebuild
   }
 })();
