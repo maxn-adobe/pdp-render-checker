@@ -98,49 +98,60 @@ export async function checkPage(context, url, opts = {}) {
     let priceText = "";
     let optionValues = [];
 
-    if (run("h1")) {
-      // ---- H1 (presence only) ----
-      const h1 = page.locator(config.selectors.h1).first();
-      const h1Count = await page.locator(config.selectors.h1).count();
-      h1Text = h1Count ? ((await h1.textContent()) || "").trim() : "";
-      result.checks.h1 = {
-        present: h1Count > 0,
-        visible: h1Count ? await h1.isVisible() : false,
-        nonEmpty: h1Text.length > 0,
-      };
-    }
+    // ---- Core reads: H1, hero image, price — in ONE page.evaluate ----
+    // Playwright locator methods (.count/.getAttribute/.isVisible/.evaluate) each
+    // cost several CDP round-trips plus actionability retries; under a shared
+    // context at concurrency they serialize on the single CDP channel and balloon
+    // to seconds per op (see PERF-AUDIT.md). A single page.evaluate is one
+    // round-trip and stays in the low-ms range under load. We always read all
+    // three (trivial) but only *record* the enabled ones, so per-check selection
+    // and the h1Text/priceText hoist are unchanged.
+    if (run("h1") || run("hero") || run("price")) {
+      const core = await page.evaluate((sel) => {
+        // Mirror Playwright's isVisible(): computed visibility must be "visible"
+        // and the element must have a non-empty box. (display:none → 0×0 box.)
+        const vis = (el) => {
+          if (!el) return false;
+          if (getComputedStyle(el).visibility !== "visible") return false;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
+        const h1 = document.querySelector(sel.h1);
+        const hero = document.querySelector(sel.hero);
+        const price = document.querySelector(sel.price);
+        return {
+          h1: { present: !!h1, visible: vis(h1), text: h1 ? h1.textContent : "" },
+          hero: {
+            present: !!hero,
+            visible: vis(hero),
+            hasSrc: !!(hero && hero.getAttribute("src")),
+            // naturalWidth > 0 proves the image actually decoded — catches 404s
+            // and lazy-load failures a presence check would miss.
+            decoded: !!(hero && hero.complete && hero.naturalWidth > 0),
+          },
+          price: { present: !!price, visible: vis(price), text: price ? price.textContent : "" },
+        };
+      }, config.selectors);
 
-    if (run("hero")) {
-      // ---- Hero image (presence only) ----
-      const hero = page.locator(config.selectors.hero).first();
-      const heroCount = await hero.count();
-      let hasSrc = false;
-      let visible = false;
-      let decoded = false;
-      if (heroCount) {
-        hasSrc = !!(await hero.getAttribute("src"));
-        visible = await hero.isVisible();
-        // naturalWidth > 0 proves the image actually decoded.
-        // Catches 404s and lazy-load failures a presence check would miss.
-        decoded = await hero.evaluate((img) => img.complete && img.naturalWidth > 0);
+      if (run("h1")) {
+        h1Text = (core.h1.text || "").trim();
+        result.checks.h1 = { present: core.h1.present, visible: core.h1.visible, nonEmpty: h1Text.length > 0 };
       }
-      result.checks.hero = { present: heroCount > 0, hasSrc, visible, decoded };
-    }
-
-    if (run("price")) {
-      // ---- Price ----
-      // A blank/$0.00 price is a real defect on a shopping page. nonZero is false
-      // only when every digit is 0 (so "$0.50" passes, "$0.00" fails).
-      const priceLoc = page.locator(config.selectors.price).first();
-      const priceCount = await priceLoc.count();
-      priceText = priceCount ? ((await priceLoc.textContent()) || "").trim() : "";
-      result.checks.price = {
-        present: priceCount > 0,
-        visible: priceCount ? await priceLoc.isVisible() : false,
-        nonEmpty: priceText.length > 0,
-        looksLikePrice: looksLikePrice(priceText),
-        nonZero: isNonZeroPrice(priceText),
-      };
+      if (run("hero")) {
+        result.checks.hero = { present: core.hero.present, hasSrc: core.hero.hasSrc, visible: core.hero.visible, decoded: core.hero.decoded };
+      }
+      if (run("price")) {
+        // A blank/$0.00 price is a real defect on a shopping page. nonZero is false
+        // only when every digit is 0 (so "$0.50" passes, "$0.00" fails).
+        priceText = (core.price.text || "").trim();
+        result.checks.price = {
+          present: core.price.present,
+          visible: core.price.visible,
+          nonEmpty: priceText.length > 0,
+          looksLikePrice: looksLikePrice(priceText),
+          nonZero: isNonZeroPrice(priceText),
+        };
+      }
     }
 
     if (run("buy")) {
@@ -148,9 +159,9 @@ export async function checkPage(context, url, opts = {}) {
       // The CTA points at the Adobe Express editor, not Zazzle, and starts as
       // href="#" until hydration. Give it a short beat to populate, then confirm
       // it is a real Express template URL whose templateId matches the page's.
-      const buy = page.locator(config.selectors.buyButton).first();
-      const buyCount = await buy.count();
-      if (buyCount) {
+      // Presence first (cheap), so we only wait for hydration when a button exists.
+      const buyPresent = await page.evaluate((sel) => !!document.querySelector(sel.buyButton), config.selectors);
+      if (buyPresent) {
         await page
           .waitForFunction(
             (sel) => {
@@ -163,19 +174,33 @@ export async function checkPage(context, url, opts = {}) {
           )
           .catch(() => {});
       }
-      const href = buyCount ? (await buy.getAttribute("href")) || "" : "";
-      const hrefTemplateId = templateIdFromExpressUrl(href);
-      const pageTemplateId = await page
-        .locator(config.selectors.productContainer)
-        .first()
-        .getAttribute("data-template-id")
-        .catch(() => null);
+      // Then read href, visibility, and the page's template id in one evaluate.
+      // (Replaces locator reads — including a pageTemplateId getAttribute that
+      // formerly inherited Playwright's 30s default timeout when the container was
+      // absent; querySelector returns null immediately instead.)
+      const buy = await page.evaluate((sel) => {
+        const vis = (el) => {
+          if (!el) return false;
+          if (getComputedStyle(el).visibility !== "visible") return false;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
+        const a = document.querySelector(sel.buyButton);
+        const container = document.querySelector(sel.productContainer);
+        return {
+          present: !!a,
+          visible: vis(a),
+          href: a ? a.getAttribute("href") || "" : "",
+          pageTemplateId: container ? container.getAttribute("data-template-id") : null,
+        };
+      }, config.selectors);
+      const hrefTemplateId = templateIdFromExpressUrl(buy.href);
       result.checks.buyLink = {
-        present: buyCount > 0,
-        visible: buyCount ? await buy.isVisible() : false,
-        hasHref: !!href && href !== "#",
+        present: buy.present,
+        visible: buy.visible,
+        hasHref: !!buy.href && buy.href !== "#",
         isExpressUrl: !!hrefTemplateId,
-        templateIdMatches: !!(hrefTemplateId && pageTemplateId && hrefTemplateId === pageTemplateId),
+        templateIdMatches: !!(hrefTemplateId && buy.pageTemplateId && hrefTemplateId === buy.pageTemplateId),
       };
     }
 

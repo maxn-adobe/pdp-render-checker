@@ -36,8 +36,17 @@ asserts the expected elements are present and correctly rendered, to catch
 - **Performance** — continuous worker pool + one shared cached browser context +
   auto-scaled concurrency (capped 8) + serial retry pass + generation recycling.
   Back-to-back: ~3× faster, zero regressions, recovered transient failures. (PR #6)
+- **Render-read optimization (2026-08-19)** — the h1/hero/price/buy checks now read the
+  DOM with a single `page.evaluate` per block instead of Playwright `locator` methods,
+  which balloon to seconds/op under shared-context concurrency (a perf audit found this
+  is the dominant cost of large **stage** runs — not the report/screenshots, and CPU sits
+  ~20%). Cut the `domReads` phase ~5× on cold stage pages and eliminated the
+  contention-induced false failures that were feeding the serial retry pass.
+  Behavior-preserving: verified by a deterministic fixture parity run (12 edge cases) +
+  live back-to-back parity (aem.live + stage), **zero verdict changes**. Full audit and
+  the remaining levers (re-tune concurrency, trim the retry pass) are in **`PERF-AUDIT.md`**.
 
-Unit tests: `npm test` (39, pure logic). Verified against live business-card PDPs.
+Unit tests: `npm test` (42, pure logic). Verified against live business-card PDPs.
 
 ## Key decisions (do not undo without reason)
 
@@ -63,8 +72,10 @@ Unit tests: `npm test` (39, pure logic). Verified against live business-card PDP
 - **"All blocks render"** is a generic no-error check (no per-product-type manifest), so it
   can't catch a *wholly-absent* expected block — only broken/empty ones that are present.
 - **Meta short-title** detection is a length-floor proxy (`titleCyo` isn't in the DOM).
-- **Large HTML reports**: thousands of URLs + base64 failure screenshots could make the
-  report file large — not yet addressed (consider caps / linking screenshots).
+- **Large HTML reports**: thousands of URLs + base64 failure screenshots make the report file
+  large; guarded by `config.report.maxInlineScreenshots` (drops inline shots above the cap). The
+  perf audit measured report/artifact build at ~2.4 s for a 5,000-URL run (HTML itself ~15 ms), i.e.
+  negligible vs. the run — not a perf concern.
 - The **GitHub Action uses bundled Chromium** → good for pre-publish `aem.live`; production
   `www.adobe.com` checks currently need the **local app** (system Chrome).
 
@@ -78,6 +89,12 @@ Unit tests: `npm test` (39, pure logic). Verified against live business-card PDP
   also check production `www.adobe.com`, not just `aem.live`.
 - **Large-scale validation on a real GitHub Actions runner** — confirm pass-rates and tune
   `CONCURRENCY` / `RECYCLE_EVERY` at scale.
+- **Perf levers #2–#5 (see `PERF-AUDIT.md`)** — now that locator contention is removed (lever #1,
+  shipped 2026-08-19), **re-tune concurrency** (8 was *past* the knee for the old engine; the new
+  engine should scale up on the 16-core box — validate with a parity/throughput sweep before raising
+  `config.perf.maxConcurrency`); **trim the serial retry pass** (retry at 2–4, and skip retrying
+  deterministic failures like an empty product-details accordion); consider tightening the failing-page
+  timeouts.
 - **Update JIRA MWPW-198738**: the buy CTA targets the Adobe Express editor (not Zazzle),
   so "points at the right Zazzle product" can't be validated from the DOM — we validate the
   Express template URN instead.
