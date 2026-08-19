@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildCsv, buildXlsx, buildHtmlReport } from "../report.mjs";
+import { config } from "../config.mjs";
 
 function sample() {
   return [
@@ -41,6 +42,21 @@ test("buildHtmlReport: self-contained doc, embeds data + screenshot, escapes '<'
   // the "<" inside error text must be escaped in the embedded JSON, not raw
   assert.ok(html.includes("render-failed: \\u003cboom>"));
   assert.ok(!html.includes("render-failed: <boom>"));
+});
+
+test("buildHtmlReport: omits inline screenshots above the threshold (large runs)", () => {
+  const n = config.report.maxInlineScreenshots + 1;
+  const results = Array.from({ length: n }, (_, i) => ({
+    url: `https://ex/${i}`,
+    ok: false,
+    checks: {},
+    errors: [],
+    screenshot: "data:image/jpeg;base64,ZZZZ",
+  }));
+  const html = buildHtmlReport(results);
+  assert.ok(html.startsWith("<!doctype html>")); // still a valid, self-contained doc
+  assert.ok(!html.includes("data:image/jpeg;base64,ZZZZ")); // screenshots dropped
+  assert.ok(html.includes("screenshots omitted")); // and the header says so
 });
 
 test("buildXlsx: returns a non-empty xlsx (zip) Buffer", async () => {

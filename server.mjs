@@ -24,7 +24,7 @@ const DOWNLOADS = {
   "report.xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-const runs = new Map(); // runId -> { results, total, done, error, artifacts, listeners:Set<res> }
+const runs = new Map(); // runId -> { results, total, done, error, artifacts, artifactsFailed, listeners:Set<res> }
 
 function sse(res, event, data) {
   res.write(`event: ${event}\n`);
@@ -50,22 +50,43 @@ function readBody(req) {
   });
 }
 
+// Build the three downloadable reports independently so one failing (e.g. a huge
+// run exhausting memory in the XLSX/HTML builder) never loses the others or
+// strands the run without a terminal event. Returns the artifacts that were
+// actually written plus the names that failed.
 async function generateArtifacts(runId, results) {
   const dir = path.join(RUNS, runId);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "report.html"), buildHtmlReport(results));
-  fs.writeFileSync(path.join(dir, "report.csv"), buildCsv(results));
-  fs.writeFileSync(path.join(dir, "report.xlsx"), await buildXlsx(results));
-  return {
-    html: `/download/${runId}/report.html`,
-    csv: `/download/${runId}/report.csv`,
-    xlsx: `/download/${runId}/report.xlsx`,
-  };
+  const artifacts = {};
+  const failed = [];
+  // CSV first: cheapest, carries no screenshots, and the most-requested export.
+  try {
+    fs.writeFileSync(path.join(dir, "report.csv"), buildCsv(results));
+    artifacts.csv = `/download/${runId}/report.csv`;
+  } catch (e) {
+    failed.push("csv");
+    console.error(`[pdp] csv build failed for ${runId}:`, e);
+  }
+  try {
+    fs.writeFileSync(path.join(dir, "report.html"), buildHtmlReport(results));
+    artifacts.html = `/download/${runId}/report.html`;
+  } catch (e) {
+    failed.push("html");
+    console.error(`[pdp] html build failed for ${runId}:`, e);
+  }
+  try {
+    fs.writeFileSync(path.join(dir, "report.xlsx"), await buildXlsx(results));
+    artifacts.xlsx = `/download/${runId}/report.xlsx`;
+  } catch (e) {
+    failed.push("xlsx");
+    console.error(`[pdp] xlsx build failed for ${runId}:`, e);
+  }
+  return { artifacts, failed };
 }
 
 function startRun(urls, concurrency) {
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
-  const run = { results: [], total: urls.length, done: false, error: null, artifacts: null, listeners: new Set() };
+  const run = { results: [], total: urls.length, done: false, error: null, artifacts: null, artifactsFailed: null, listeners: new Set() };
   runs.set(runId, run);
 
   (async () => {
@@ -100,14 +121,25 @@ function startRun(urls, concurrency) {
       return;
     }
 
-    run.artifacts = await generateArtifacts(runId, results);
+    const { artifacts, failed } = await generateArtifacts(runId, results);
+    run.artifacts = artifacts;
+    run.artifactsFailed = failed;
     run.done = true;
     const passed = results.filter((r) => r.ok).length;
     for (const res of run.listeners) {
-      sse(res, "done", { passed, total: results.length, artifacts: run.artifacts });
+      sse(res, "done", { passed, total: results.length, artifacts, failed });
       res.end();
     }
-  })();
+  })().catch((e) => {
+    // Last-resort guard: never leave the client hanging without a terminal event.
+    console.error(`[pdp] run ${runId} crashed:`, e);
+    run.done = true;
+    run.error = run.error || `Run failed: ${e.message}`;
+    for (const res of run.listeners) {
+      sse(res, "error", { message: run.error });
+      res.end();
+    }
+  });
 
   return runId;
 }
@@ -163,7 +195,7 @@ function handleProgress(req, res, runId) {
   });
   if (run.done) {
     if (run.error) sse(res, "error", { message: run.error });
-    else sse(res, "done", { passed: run.results.filter((r) => r.ok).length, total: run.results.length, artifacts: run.artifacts });
+    else sse(res, "done", { passed: run.results.filter((r) => r.ok).length, total: run.results.length, artifacts: run.artifacts || {}, failed: run.artifactsFailed || [] });
     return res.end();
   }
   run.listeners.add(res);
