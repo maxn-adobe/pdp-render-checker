@@ -39,6 +39,11 @@ validated upstream before page generation).
   hero, and price are still present.
 - Image alt text: the hero and thumbnail product images have non-empty alt
   (decorative images, which correctly use an empty alt, are excluded).
+- Product Details: the Product Details section renders a non-empty accordion —
+  at least one item is present (an empty or missing accordion is treated as a
+  render failure). The count is scoped to the product-details accordion, so other
+  accordions on the page don't count. It is client-rendered, so the check waits
+  (bounded) for the first item before judging.
 - A page that never populates within the timeout fails (that is the bug we hunt).
 - Checks against every URL in one run, in parallel (bounded concurrency).
 
@@ -141,7 +146,8 @@ npm test
 
 Edit `config.mjs`:
 - `selectors` — pin the title, hero, price, buy-button, product-container,
-  options-container, images-container, and alt-images selectors to your PDP markup.
+  options-container, images-container, alt-images, and product-details
+  (section / accordion / accordion-item) selectors to your PDP markup.
 - `patterns` — the currency, Express-template-URL, and `{{ }}` placeholder
   regexes used by the price / buy-link / placeholder checks.
 - `junk` — the leaked-token list (`none`/`null`/`undefined`/`n/a`) and the
@@ -152,7 +158,8 @@ Edit `config.mjs`:
 - `allowedHostPattern` — adjust if your branch/repo/owner/production domain differ.
 - `timeouts` — raise if pages are slow to populate (`buyLinkMs` waits for the buy
   CTA href to hydrate off `#`; `imagesMs` bounds the gallery-image decode wait;
-  `mobileReflowMs` is the settle time after switching to the mobile viewport).
+  `productDetailsMs` bounds the wait for the Product Details accordion to render its
+  items; `mobileReflowMs` is the settle time after switching to the mobile viewport).
 
 ### Performance / large batches
 

@@ -24,6 +24,12 @@ export const config = {
     // Product images that must carry alt text. Excludes decorative images, for
     // which an empty alt is the correct, accessible choice.
     altImages: "#pdpx-product-hero-image, .pdpx-image-thumbnail-carousel-item-image",
+    // Product Details accordion. The item class (.ax-accordion-item-container) is
+    // shared by any ax-accordion on the page, so the check always counts items
+    // *within* the product-details accordion, never globally.
+    productDetailsSection: ".pdpx-product-details-section",
+    productDetailsAccordion: ".pdpx-product-details-accordion",
+    accordionItem: ".ax-accordion-item-container",
   },
 
   // 3. PATTERNS — how a rendered value is judged "real".
@@ -102,6 +108,9 @@ export const config = {
     // Bounded wait for every gallery image (hero + thumbnails) to decode; the
     // Zazzle rendering endpoint returns them a few seconds after injection.
     imagesMs: 15000,
+    // Bounded wait for the Product Details accordion to render its items; it
+    // decorates a beat after injection (async decorate + a product API call).
+    productDetailsMs: 10000,
     // Settle time after switching to the mobile viewport before measuring overflow.
     mobileReflowMs: 400,
   },

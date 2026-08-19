@@ -2,7 +2,7 @@
 
 Pre-publish **render-QA** for Adobe Express **Print PDPs**. It renders each page in
 headless Chromium (Playwright), waits for the client-side Zazzle injection, and
-asserts 12 checks against the *rendered* DOM — it catches render/pipeline bugs, not
+asserts 13 checks against the *rendered* DOM — it catches render/pipeline bugs, not
 data bugs (product data is validated upstream). Two front-ends over one shared
 engine: a **GitHub Action** and a **local double-click web app**.
 
@@ -11,15 +11,15 @@ engine: a **GitHub Action** and a **local double-click web app**.
 ## Architecture (all ESM `.mjs`, Node 20+)
 - `config.mjs` — all tunables: `allowedHostPattern`, `selectors`, `patterns`, `junk`, `meta`, `mobile`, `perf`, `timeouts`.
 - `checks.mjs` — **pure logic, no browser**: predicates, `verdicts()`, `parseUrls()`, `rowModel()`/`CHECK_COLUMNS`. Unit-tested (`node:test`).
-- `engine.mjs` — Playwright: `checkPage(context, url)` runs the 12 checks; `runChecks({…, onResult})` = worker pool + shared cached context + retry pass. **Shared by both front-ends — don't fork it.**
+- `engine.mjs` — Playwright: `checkPage(context, url)` runs the 13 checks; `runChecks({…, onResult})` = worker pool + shared cached context + retry pass. **Shared by both front-ends — don't fork it.**
 - `check.mjs` — GitHub Action / CLI entrypoint (env in → incremental summary table + exit code).
 - `report.mjs` — `buildXlsx` / `buildCsv` / `buildHtmlReport` (all driven by `rowModel`).
 - `server.mjs` + `public/index.html` — local web app (loopback `node:http` + vanilla, XSS-safe UI).
 - `build-bundle.sh` — builds the self-contained macOS bundle into `dist/`.
 - `sample-data/` — committed URL lists (`urls*.txt`). `runs/` and `dist/` are gitignored.
 
-## The 12 checks (per URL)
-title, hero image, price, buy-link, no-`{{ }}`-placeholders, options, no-junk-tokens, all-photos-decoded, all-blocks-render, meta-tags, mobile-overflow, image-alt-text.
+## The 13 checks (per URL)
+title, hero image, price, buy-link, no-`{{ }}`-placeholders, options, no-junk-tokens, all-photos-decoded, all-blocks-render, meta-tags, mobile-overflow, image-alt-text, product-details (accordion has ≥1 item).
 
 ## Commands
 - `npm test` — unit tests (pure logic).
@@ -36,4 +36,4 @@ title, hero image, price, buy-link, no-`{{ }}`-placeholders, options, no-junk-to
 - The host allowlist (`allowedHostPattern`) is intentional — keep it.
 
 ## Workflow
-Branch off `main`, open a PR (don't push to `main` directly). Pure logic → `checks.mjs` (+ a `node:test`); browser work → `engine.mjs`. Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+Work directly on `main` (solo project — no branch/PR required). Pure logic → `checks.mjs` (+ a `node:test`); browser work → `engine.mjs`. Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.

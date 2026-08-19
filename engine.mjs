@@ -293,6 +293,29 @@ export async function checkPage(context, url, opts = {}) {
     }, config.selectors);
     mark("postImage");
 
+    // ---- Product Details (the section's accordion has at least one item) ----
+    // Client-rendered a beat after injection (async decorate + a product API
+    // call), so wait (bounded) for the first item before judging — mirrors the
+    // photos wait. A genuinely-empty accordion waits out the timeout then reports
+    // 0, which correctly fails; a populated one short-circuits immediately.
+    await page
+      .waitForFunction(
+        (sel) => {
+          const acc = document.querySelector(sel.productDetailsAccordion);
+          return !!(acc && acc.querySelectorAll(sel.accordionItem).length);
+        },
+        config.selectors,
+        { timeout: config.timeouts.productDetailsMs }
+      )
+      .catch(() => {});
+    result.checks.productDetails = await page.evaluate((sel) => {
+      const section = document.querySelector(sel.productDetailsSection);
+      const accordion = section && section.querySelector(sel.productDetailsAccordion);
+      const items = accordion ? accordion.querySelectorAll(sel.accordionItem) : [];
+      return { sectionPresent: !!section, accordionPresent: !!accordion, itemCount: items.length };
+    }, config.selectors);
+    mark("productDetails");
+
     // ---- Mobile layout (MUST run last — it resizes the viewport) ----
     await page.setViewportSize({ width: config.mobile.width, height: config.mobile.height });
     await page.waitForTimeout(config.timeouts.mobileReflowMs);
@@ -363,6 +386,7 @@ export async function checkPage(context, url, opts = {}) {
       v.meta &&
       v.mobile &&
       v.altText &&
+      v.productDetails &&
       result.errors.length === 0;
 
     // Best-effort desktop screenshot of a failing page, for the HTML report.

@@ -120,6 +120,7 @@ function passingResult() {
       meta: { hasDescription: true, descriptionOk: true, hasCanonical: true, hasOgTitle: true, hasOgImage: true },
       mobile: { overflowPx: 0, contentOverflowPx: 0, noOverflow: true, elementsOk: true, missing: [] },
       altText: { total: 7, missing: 0, missingSrcs: [] },
+      productDetails: { sectionPresent: true, accordionPresent: true, itemCount: 3 },
     },
   };
 }
@@ -128,7 +129,7 @@ test("verdicts: a fully-passing result is all true", () => {
   assert.deepEqual(verdicts(passingResult()), {
     h1: true, hero: true, price: true, buy: true, placeholders: true,
     options: true, noJunk: true, photos: true, blocks: true,
-    meta: true, mobile: true, altText: true,
+    meta: true, mobile: true, altText: true, productDetails: true,
   });
 });
 
@@ -215,11 +216,23 @@ test("verdicts: a product image without alt fails altText", () => {
   assert.equal(verdicts(r).altText, false);
 });
 
+test("verdicts: an empty product-details accordion fails productDetails", () => {
+  const r = passingResult();
+  r.checks.productDetails = { sectionPresent: true, accordionPresent: true, itemCount: 0 };
+  assert.equal(verdicts(r).productDetails, false);
+});
+
+test("verdicts: a missing product-details section fails productDetails", () => {
+  const r = passingResult();
+  r.checks.productDetails = { sectionPresent: false, accordionPresent: false, itemCount: 0 };
+  assert.equal(verdicts(r).productDetails, false);
+});
+
 test("verdicts: missing checks degrade safely (options skips when absent)", () => {
   const empty = {
     h1: false, hero: false, price: false, buy: false, placeholders: false,
     options: true, noJunk: false, photos: false, blocks: false,
-    meta: false, mobile: false, altText: false,
+    meta: false, mobile: false, altText: false, productDetails: false,
   };
   assert.deepEqual(verdicts({ checks: {} }), empty);
   assert.deepEqual(verdicts({}), empty);
@@ -239,12 +252,12 @@ test("parseUrls: splits on commas and newlines; accepts arrays; empty-safe", () 
 });
 
 // ---- rowModel ----
-test("rowModel: a passing result has 12 ok cells and no notes", () => {
+test("rowModel: a passing result has 13 ok cells and no notes", () => {
   const r = passingResult();
   r.ok = true;
   const m = rowModel(r);
   assert.equal(m.ok, true);
-  assert.equal(m.cells.length, 12);
+  assert.equal(m.cells.length, 13);
   assert.ok(m.cells.every((c) => c.ok));
   assert.deepEqual(m.notes, []);
 });
@@ -264,6 +277,15 @@ test("rowModel: a leaked placeholder yields an un-ok cell and a note", () => {
   const m = rowModel(r);
   assert.equal(m.cells.find((c) => c.key === "placeholders").ok, false);
   assert.ok(m.notes.some((n) => n.includes("{{title}}")));
+});
+
+test("rowModel: an empty product-details accordion yields an un-ok cell and a note", () => {
+  const r = passingResult();
+  r.ok = false;
+  r.checks.productDetails = { sectionPresent: true, accordionPresent: true, itemCount: 0 };
+  const m = rowModel(r);
+  assert.equal(m.cells.find((c) => c.key === "productDetails").ok, false);
+  assert.ok(m.notes.some((n) => n.startsWith("product details:")));
 });
 
 test("rowModel: errors pass through to notes", () => {

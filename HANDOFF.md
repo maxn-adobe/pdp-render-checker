@@ -15,12 +15,14 @@ asserts the expected elements are present and correctly rendered, to catch
 
 ## Current state — everything below is shipped on `main` (PRs #1–#6, ~2026-08)
 
-- **12-check validation gate** (MWPW-198738, tiers P0/P1/P2): title, hero, **price**
+- **13-check validation gate** (MWPW-198738 tiers P0/P1/P2, plus a later product-details check): title, hero, **price**
   (fails on $0.00/blank), **buy-link** (Express `/design-remix/template/{urn}` matches
   the page's `data-template-id`; structural, no network), **no `{{ }}` placeholders**,
   **options** (real selected values), **no junk tokens** (none/null/…), **all photos
   decoded**, **all blocks render** (generic no-error), **meta tags**, **mobile
-  overflow**, **image alt**. (PR #1)
+  overflow**, **image alt**, and **product details** (the Product Details section's
+  accordion must render ≥1 item; empty/missing = fail — client-rendered, so it has a
+  bounded wait like the gallery). (P0/P1/P2 in PR #1; product-details added 2026-08)
 - **Local web app** — double-click launcher → loopback server + browser UI: paste/upload
   URLs, live progress, interactive sortable/filterable table with per-URL drill-down,
   and downloadable **XLSX** + self-contained interactive **HTML report** (with a
@@ -35,7 +37,7 @@ asserts the expected elements are present and correctly rendered, to catch
   auto-scaled concurrency (capped 8) + serial retry pass + generation recycling.
   Back-to-back: ~3× faster, zero regressions, recovered transient failures. (PR #6)
 
-Unit tests: `npm test` (32, pure logic). Verified against live business-card PDPs.
+Unit tests: `npm test` (39, pure logic). Verified against live business-card PDPs.
 
 ## Key decisions (do not undo without reason)
 

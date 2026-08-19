@@ -4,7 +4,7 @@
 // exit code. Run: `node check.mjs` (see .github/workflows/pdp-check.yml).
 import fs from "node:fs";
 import path from "node:path";
-import { rowModel, parseUrls } from "./checks.mjs";
+import { rowModel, parseUrls, CHECK_COLUMNS } from "./checks.mjs";
 import { runChecks } from "./engine.mjs";
 
 // URLs to check, in precedence order:
@@ -56,8 +56,8 @@ function startSummary() {
     [
       `## PDP render check`,
       ``,
-      `| Result | URL | H1 | Hero | Price | Buy | Placeholder | Options | Junk | Images | Blocks | Meta | Mobile | Alt | Notes |`,
-      `|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|---|`,
+      `| Result | URL | ${CHECK_COLUMNS.map((c) => c.label).join(" | ")} | Notes |`,
+      `|---|---|${CHECK_COLUMNS.map(() => ":--:").join("|")}|---|`,
       ``,
     ].join("\n")
   );

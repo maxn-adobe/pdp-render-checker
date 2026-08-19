@@ -86,6 +86,8 @@ export function verdicts(r) {
     ),
     mobile: !!(c.mobile && c.mobile.noOverflow && c.mobile.elementsOk),
     altText: !!(c.altText && c.altText.total > 0 && c.altText.missing === 0),
+    // The Product Details section must render a non-empty accordion (≥1 item).
+    productDetails: !!(c.productDetails && c.productDetails.itemCount > 0),
   };
 }
 
@@ -117,6 +119,7 @@ export const CHECK_COLUMNS = [
   { key: "meta", label: "Meta", description: "Required meta tags are present: description, canonical, and social-share (og) tags." },
   { key: "mobile", label: "Mobile", description: "At phone width, the page content fits with no sideways scrolling." },
   { key: "altText", label: "Alt", description: "Every product image has descriptive alt text for accessibility." },
+  { key: "productDetails", label: "Product Details", description: "The Product Details section is present and lists at least one item (its accordion isn't empty)." },
 ];
 
 // Normalize one result into a render-ready row: per-column pass/fail plus the
@@ -148,5 +151,13 @@ export function rowModel(result) {
     notes.push(`mobile: ${bits.join("; ")}`);
   }
   if (!v.altText && c.altText) notes.push(`alt missing: ${c.altText.missing}`);
+  if (!v.productDetails && c.productDetails) {
+    const why = !c.productDetails.sectionPresent
+      ? "no section"
+      : !c.productDetails.accordionPresent
+        ? "no accordion"
+        : "empty (0 items)";
+    notes.push(`product details: ${why}`);
+  }
   return { url: result?.url, ok: !!(result && result.ok), cells, notes };
 }
