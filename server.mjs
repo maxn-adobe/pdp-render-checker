@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.mjs";
 import { parseUrls, rowModel, CHECK_COLUMNS } from "./checks.mjs";
-import { runChecks, autoConcurrency } from "./engine.mjs";
+import { runChecks } from "./engine.mjs";
 import { buildXlsx, buildCsv, buildHtmlReport } from "./report.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -84,7 +84,10 @@ async function generateArtifacts(runId, results, enabled) {
   return { artifacts, failed };
 }
 
-function startRun(urls, concurrency, enabledChecks) {
+function startRun(urls, enabledChecks) {
+  // Fixed, validated concurrency for the local app (I/O-bound; decoupled from CPU
+  // cores). The UI no longer lets the user change it — see config.perf.localConcurrency.
+  const concurrency = config.perf.localConcurrency;
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const run = { results: [], total: urls.length, done: false, error: null, artifacts: null, artifactsFailed: null, enabled: enabledChecks, listeners: new Set() };
   runs.set(runId, run);
@@ -170,9 +173,6 @@ async function handleRun(req, res) {
     res.writeHead(400, { "content-type": "application/json" });
     return res.end(JSON.stringify({ error: "No allowed URLs to check.", skipped }));
   }
-  // Blank = let the engine auto-scale to the machine; an explicit value is
-  // clamped to a sane hard limit (the retry pass recovers over-parallelized runs).
-  const concurrency = data.concurrency ? Math.max(1, Math.min(24, Number(data.concurrency))) : undefined;
   // Optional per-check subset (column keys). Omitted → all checks. Provided but
   // empty/all-invalid → 400 (the UI disables Run when nothing is selected).
   let enabledChecks;
@@ -184,7 +184,7 @@ async function handleRun(req, res) {
       return res.end(JSON.stringify({ error: "Select at least one check." }));
     }
   }
-  const runId = startRun(allowed, concurrency, enabledChecks);
+  const runId = startRun(allowed, enabledChecks);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ runId, total: allowed.length, skipped }));
 }
@@ -248,8 +248,6 @@ const server = http.createServer(async (req, res) => {
           arch: process.arch,
           platform: process.platform,
           node: process.version,
-          defaultConcurrency: Number(process.env.CONCURRENCY) || autoConcurrency(),
-          maxConcurrency: config.perf.maxConcurrency,
           // Column metadata (key/label/description) so the UI can render headers
           // and the click-to-explain descriptions without per-row payload bloat.
           columns: CHECK_COLUMNS,

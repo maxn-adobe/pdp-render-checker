@@ -45,6 +45,14 @@ asserts the expected elements are present and correctly rendered, to catch
   Behavior-preserving: verified by a deterministic fixture parity run (12 edge cases) +
   live back-to-back parity (aem.live + stage), **zero verdict changes**. Full audit and
   the remaining levers (re-tune concurrency, trim the retry pass) are in **`PERF-AUDIT.md`**.
+- **Concurrency re-tune + UI simplification (2026-08-20, lever #2)** — a stage sweep of the new
+  engine found the safe knee is **12** (0 failures at ≤12; ≥16 *probabilistically* melts down with
+  transient render-contention failures; **no server rate-limiting at any level up to 32** — the
+  ceiling is client-side, so VPN is irrelevant). The **local web app now runs a fixed
+  `config.perf.localConcurrency = 12`** (decoupled from CPU cores — the workload is I/O-bound), and
+  the **user-facing concurrency field was removed** from the UI. The Action/CLI is unchanged
+  (`autoConcurrency` = min(cores, `maxConcurrency` 8), still overridable via `CONCURRENCY`).
+  Validated by a regression gate (0 pass→fail vs a low-concurrency ground truth).
 
 Unit tests: `npm test` (42, pure logic). Verified against live business-card PDPs.
 

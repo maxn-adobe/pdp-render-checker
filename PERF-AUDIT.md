@@ -93,7 +93,8 @@ huge fraction of pages fail.
    the commit that adds this file.*
 2. **Re-tune concurrency.** For the engine as-is, ~4 beats 8. After lever #1
    removes the contention, re-sweep — with CPU at 20 % the box should then scale
-   *up* (12–16), which is where the real throughput win comes from.
+   *up* (12–16), which is where the real throughput win comes from. ← *done
+   2026-08-20; local app now runs a fixed 12. See "Follow-up: lever #2" below.*
 3. **Cut the serial-retry tail.** Retries run at concurrency 1 through the full
    wait chain. Retry at 2–4 instead, and **skip retrying deterministic failures**
    (an empty Product Details accordion is not transient — re-running just burns
@@ -108,3 +109,49 @@ huge fraction of pages fail.
 
 Note: raising concurrency *alone* is a trap with the pre-lever-#1 engine — it
 slows runs down and manufactures failures. The unlock is lever #1, *then* #2.
+
+## Follow-up: lever #2 — concurrency re-tune (2026-08-20)
+
+Swept the **new** (post-lever-#1) engine on stage (system Chrome), warmed a fixed
+slice then measured each level, plus fresh-cold confirmation:
+
+| concurrency | throughput | failures | notes |
+|---|---|---|---|
+| 4 | 0.31 pps | 0 | |
+| 8 (old default) | 0.81 pps | 0 | |
+| **12** | **0.86 pps** | **0** | best consistently-clean level |
+| 16 | 0.42 pps | **23/40** (or 0 on a lucky run) | *probabilistic* meltdown |
+| 24 | 0.70 pps | 16/40 | |
+| 32 | 0.43 pps | **40/40** | total collapse |
+
+**Findings:**
+- The safe knee is **12**: zero failures at ≤12 across every run; ≥16 is
+  *probabilistic* — sometimes clean, sometimes 23–40/40 fail (transient render
+  contention). One bad patch in a 5K run = hundreds of false failures feeding the
+  serial retry pass, so 16 is not worth the tail risk.
+- Lever #1 roughly **doubled** the safe concurrency (old engine failed at 8; new
+  engine is clean through 12).
+- **No server-side rate-limiting at any level (up to 32)** — every failure was
+  client-side `content-never-injected` (render contention), never HTTP 429/503.
+  This answers the original question: the ceiling is client-side, so VPN /
+  egress-IP does not change it.
+- CPU stayed ~15–22% throughout — still wait-bound, never compute-bound.
+
+**Decision / change:**
+- `config.perf.localConcurrency = 12` — the **local web app** now runs a **fixed**
+  12, deliberately **decoupled from CPU cores** (the workload is I/O-bound, so
+  core count isn't the constraint).
+- The **user-facing concurrency field was removed** from the web UI (per request);
+  the app always uses the validated value.
+- The **Action/CLI is unchanged**: it still uses `autoConcurrency()` =
+  `min(cores, maxConcurrency=8)` (overridable via `CONCURRENCY`). Left conservative
+  because it targets aem.live, which wasn't swept at scale — raise only after a
+  sweep there.
+
+**Validation:** regression gate (conc 12 vs a low-concurrency ground truth on
+stage, with retries) → **0 regressions** (no page passed at low concurrency but
+failed at 12); conc 12 produced 0 failures across every sweep/gate run.
+
+**Not done (future levers):** #3 (trim the serial-retry tail — retry at 2–4, skip
+deterministic failures), #4 (tighten failing-page timeouts), #5 (overlap the
+sequential waits). These compound on top of #1 + #2.

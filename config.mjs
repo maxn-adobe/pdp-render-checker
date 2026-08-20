@@ -75,9 +75,17 @@ export const config = {
 
   // 7. PERFORMANCE — parallelism + recycling for large batches.
   perf: {
-    // First-pass concurrency auto-scales to CPU cores, capped here. The cap is
-    // deliberately modest: too many pages rendering at once starves the browser's
-    // layout engine and causes false failures. Override with CONCURRENCY / the UI.
+    // Concurrency for the LOCAL WEB APP (the validated stage scenario). A perf
+    // sweep on stage (see PERF-AUDIT.md) found throughput scales cleanly to ~12
+    // concurrent pages with ZERO failures, then falls off a cliff at >=16
+    // (transient render-contention failures — content-never-injected, NOT server
+    // rate-limiting). The workload is I/O-bound (CPU ~20%), so this is a fixed
+    // value deliberately decoupled from CPU cores. The UI no longer exposes it.
+    localConcurrency: 12,
+    // Auto-scale cap for the Action/CLI: autoConcurrency() = min(cores, this),
+    // also overridable via the CONCURRENCY env var. Kept conservative at 8 — the
+    // sweep validated 12 on stage, but the Action targets aem.live, which wasn't
+    // swept at scale; raise only after a parity/throughput sweep there.
     maxConcurrency: 8,
     // Failed URLs are then re-checked serially (concurrency 1), which is
     // contention-free — so layout-sensitive checks (e.g. mobile overflow) measure

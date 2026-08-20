@@ -82,7 +82,6 @@
     <textarea id="urls" placeholder="One URL per line (or comma-separated)…"></textarea>
     <div class="controls">
       <label>Load file <input id="file" type="file" accept=".txt,text/plain" /></label>
-      <label>Concurrency <input id="concurrency" type="number" min="1" max="24" value="3" /></label>
       <button id="run">Run checks</button>
     </div>
   </fieldset>
@@ -128,7 +127,6 @@
         info.arch === "arm64" ? "Apple Silicon (arm64)" : info.arch === "x64" ? "Intel (x64)" : info.arch;
       el.textContent = label;
       el.hidden = false;
-      if (info.defaultConcurrency) $("concurrency").value = info.defaultConcurrency;
       initSelected();
       buildChecksPanel();
       syncRunEnabled();
@@ -237,7 +235,7 @@
       resp = await fetch("/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, concurrency: Number($("concurrency").value) || 3, checks: [...state.selected] }),
+        body: JSON.stringify({ urls, checks: [...state.selected] }),
       });
     } catch (err) {
       return fail("Could not reach the local server.");
