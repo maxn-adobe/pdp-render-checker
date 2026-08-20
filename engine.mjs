@@ -312,9 +312,12 @@ export async function checkPage(context, url, opts = {}) {
 
     if (run("meta")) {
       // ---- Meta tags ----
-      // The description should be a real sentence, not the short spec title (the
-      // known regression). The short title isn't in the DOM, so a length floor is
-      // the proxy. Also require canonical + core social tags.
+      // Require a description (at least a couple of words — see
+      // config.meta.descriptionMinLength), a canonical link, and core social tags.
+      // The length floor is intentionally low: it just confirms a non-trivial
+      // description is present, and no longer tries to detect the short-title
+      // regression (MWPW-198738). A {{ }} leak in the description is still caught by
+      // the page-wide `placeholders` check below (it scans meta[content]).
       const metaInfo = await page.evaluate(() => {
         const get = (s, a = "content") => {
           const el = document.querySelector(s);
@@ -330,10 +333,7 @@ export async function checkPage(context, url, opts = {}) {
       const metaDesc = (metaInfo.description || "").trim();
       result.checks.meta = {
         hasDescription: metaDesc.length > 0,
-        descriptionOk:
-          metaDesc.length >= config.meta.descriptionMinLength &&
-          metaDesc !== h1Text &&
-          findPlaceholders([metaDesc]).length === 0,
+        descriptionOk: metaDesc.length >= config.meta.descriptionMinLength,
         hasCanonical: !!(metaInfo.canonical && metaInfo.canonical.trim()),
         hasOgTitle: !!(metaInfo.ogTitle && metaInfo.ogTitle.trim()),
         hasOgImage: !!(metaInfo.ogImage && metaInfo.ogImage.trim()),

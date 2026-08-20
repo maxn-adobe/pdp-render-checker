@@ -52,11 +52,14 @@ export const config = {
     allow: ["None"],
   },
 
-  // 5. META — a healthy meta description is a full sentence, not the short spec
-  //    title (the known regression). The short title isn't in the DOM, so a
-  //    length floor is used as the proxy; adjust to taste.
+  // 5. META — require a description of at least a couple of words. This is a
+  //    minimal "a non-trivial description is present" floor; it is NOT the old
+  //    short-title-regression proxy (that ≥50-char + not-equal-to-title check was
+  //    relaxed 2026-08-20 — it false-failed legitimately-short descriptions). A
+  //    {{ }} leak in the description is still caught by the page-wide placeholder
+  //    check. Adjust to taste.
   meta: {
-    descriptionMinLength: 50,
+    descriptionMinLength: 10,
   },
 
   // 6. MOBILE — viewport used to re-check element presence and confirm the page

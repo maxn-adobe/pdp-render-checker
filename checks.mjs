@@ -188,7 +188,7 @@ export function rowModel(result, enabled) {
   if (!v.meta && c.meta) {
     const reasons = [];
     if (!c.meta.hasDescription) reasons.push("no-desc");
-    else if (!c.meta.descriptionOk) reasons.push("desc-short/dup");
+    else if (!c.meta.descriptionOk) reasons.push("desc-too-short");
     if (!c.meta.hasCanonical) reasons.push("no-canonical");
     if (!c.meta.hasOgTitle) reasons.push("no-og:title");
     if (!c.meta.hasOgImage) reasons.push("no-og:image");

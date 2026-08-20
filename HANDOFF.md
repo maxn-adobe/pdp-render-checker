@@ -86,7 +86,10 @@ Unit tests: `npm test` (48, pure logic). Verified against live business-card PDP
   validate pass-rates/timing on a real GitHub Actions run before trusting large-batch numbers.
 - **"All blocks render"** is a generic no-error check (no per-product-type manifest), so it
   can't catch a *wholly-absent* expected block — only broken/empty ones that are present.
-- **Meta short-title** detection is a length-floor proxy (`titleCyo` isn't in the DOM).
+- **Meta description** now only requires a couple of words (`descriptionMinLength` 10). It no
+  longer detects the short-title regression (the old ≥50-char + not-equal-to-title proxy was
+  relaxed 2026-08-20 — it false-failed legitimately-short stage descriptions; e.g. the farm-trip
+  flyer's description is literally its title).
 - **Large HTML reports**: thousands of URLs + base64 failure screenshots make the report file
   large; guarded by `config.report.maxInlineScreenshots` (drops inline shots above the cap). The
   perf audit measured report/artifact build at ~2.4 s for a 5,000-URL run (HTML itself ~15 ms), i.e.

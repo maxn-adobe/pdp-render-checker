@@ -152,8 +152,10 @@ Edit `config.mjs`:
   regexes used by the price / buy-link / placeholder checks.
 - `junk` — the leaked-token list (`none`/`null`/`undefined`/`n/a`) and the
   exact-cased `allow` list of legitimate labels (e.g. the "None" option).
-- `meta` — `descriptionMinLength`, the length floor that stands in for the
-  short-title regression (the short title isn't in the rendered DOM).
+- `meta` — `descriptionMinLength`, a small floor (a couple of words) that just
+  requires a non-trivial description. (It formerly stood in for the short-title
+  regression via a ≥50-char + not-equal-to-title check; relaxed 2026-08-20 because
+  that false-failed legitimately-short descriptions.)
 - `mobile` — the phone-viewport `width`/`height` and `overflowTolerancePx`.
 - `allowedHostPattern` — adjust if your branch/repo/owner/production domain differ.
 - `timeouts` — raise if pages are slow to populate (`buyLinkMs` waits for the buy
