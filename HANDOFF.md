@@ -104,12 +104,14 @@ Unit tests: `npm test` (48, pure logic). Verified against live business-card PDP
   also check production `www.adobe.com`, not just `aem.live`.
 - **Large-scale validation on a real GitHub Actions runner** — confirm pass-rates and tune
   `CONCURRENCY` / `RECYCLE_EVERY` at scale.
-- **Perf levers #2–#5 (see `PERF-AUDIT.md`)** — now that locator contention is removed (lever #1,
-  shipped 2026-08-19), **re-tune concurrency** (8 was *past* the knee for the old engine; the new
-  engine should scale up on the 16-core box — validate with a parity/throughput sweep before raising
-  `config.perf.maxConcurrency`); **trim the serial retry pass** (retry at 2–4, and skip retrying
-  deterministic failures like an empty product-details accordion); consider tightening the failing-page
-  timeouts.
+- **Perf initiative — closed out (2026-08-20; see `PERF-AUDIT.md`).** Levers #1 (locator→evaluate),
+  #2 (concurrency 12 + UI field removed), and #3 (retry pass conc 4 + skip deterministic failures)
+  shipped. **#4 (tighten failing-page timeouts) deferred** — marginal (only helps failing pages),
+  needs cold-page p99 data that's now scarce, and touches the correctness-critical injection gate.
+  **#5 (overlap sequential waits) evaluated and skipped — no speedup**: the waits poll over content
+  that hydrates concurrently, so sequential total already equals `max(readiness times)`; overlapping
+  gains nothing and only shrinks deadlines. Per-page cost is now at the irreducible Zazzle-hydration
+  floor (~35–45 min for 5K at conc 12).
 - **Update JIRA MWPW-198738**: the buy CTA targets the Adobe Express editor (not Zazzle),
   so "points at the right Zazzle product" can't be validated from the DOM — we validate the
   Express template URN instead.

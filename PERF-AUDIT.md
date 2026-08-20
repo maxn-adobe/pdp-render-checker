@@ -152,8 +152,22 @@ slice then measured each level, plus fresh-cold confirmation:
 stage, with retries) → **0 regressions** (no page passed at low concurrency but
 failed at 12); conc 12 produced 0 failures across every sweep/gate run.
 
-**Not done (future levers):** #4 (tighten failing-page timeouts), #5 (overlap the
-sequential waits). These compound on top of #1 + #2 + #3.
+**Evaluated & not pursued (2026-08-20):**
+- **#4 (tighten failing-page timeouts)** — *deferred.* The caps only bite on failing/slow
+  pages (passing pages short-circuit early), so the value is marginal on a clean corpus; setting
+  caps safely needs fresh cold-page p99 data, which is now hard to get (every stage slice is
+  Zazzle-cache-warm from this session's probing); and the biggest cap, `contentInjectedMs` (the
+  injection gate), is correctness-critical. Revisit only if broken-deploy runtimes become a pain.
+- **#5 (overlap the sequential waits)** — *skipped: no speedup.* The post-gate waits are
+  `waitForFunction` polls over content that hydrates *concurrently* in the browser (injection,
+  buy-href, images, product-details are independent post-Zazzle async ops). A poll resolves at
+  its content's **absolute** readiness regardless of when it starts, so the sequential total
+  already equals `max(all readiness times)` — identical to a concurrent `Promise.all`. The
+  profiling marks confirm it: buy-href resolves at ~8.5 s (the long pole), while `imagesWait` /
+  `productDetails` marks are ~0 ms because their content is long-ready by the time those waits
+  run. Overlapping would only *shrink* each wait's absolute deadline (a minor parity risk) for
+  zero gain. Per-page cost is now at the **irreducible Zazzle-hydration floor** (~35–45 min for
+  5K at conc 12) — no client-side lever crosses it.
 
 ## Follow-up: lever #3 — trim the serial retry pass (2026-08-20)
 
