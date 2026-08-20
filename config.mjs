@@ -87,11 +87,14 @@ export const config = {
     // sweep validated 12 on stage, but the Action targets aem.live, which wasn't
     // swept at scale; raise only after a parity/throughput sweep there.
     maxConcurrency: 8,
-    // Failed URLs are then re-checked serially (concurrency 1), which is
-    // contention-free — so layout-sensitive checks (e.g. mobile overflow) measure
-    // correctly and transient failures recover, while truly-broken pages stay failed.
+    // Failed URLs are re-checked once to recover transient (contention) failures.
+    // The retry pass runs at a low concurrency — 4, comfortably below the ~12
+    // failure cliff, so it stays effectively contention-free (layout-sensitive
+    // checks like mobile overflow still measure correctly) while finishing ~4x
+    // faster than the old serial pass. The engine also skips retrying deterministic
+    // content defects entirely (checks.mjs isRetryable). RETRY_CONCURRENCY overrides.
     retries: 1,
-    retryConcurrency: 1,
+    retryConcurrency: 4,
     // Pages processed between browser/context recycles (bounds memory on long
     // batches). Override with RECYCLE_EVERY.
     recycleEvery: 150,

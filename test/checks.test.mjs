@@ -7,6 +7,7 @@ import {
   findPlaceholders,
   isJunkValue,
   verdicts,
+  isRetryable,
   parseUrls,
   rowModel,
   selectedColumns,
@@ -309,4 +310,55 @@ test("rowModel: an enabled subset yields only those cells (skipped checks omitte
   const m = rowModel(r, ["h1", "price"]);
   assert.deepEqual(m.cells.map((c) => c.key), ["h1", "price"]);
   assert.ok(m.cells.every((c) => c.ok));
+});
+
+// ---- isRetryable (retry-pass trimming) ----
+// Start from a passing result and break exactly what each case needs.
+function withChecks(mutate) {
+  const r = passingResult();
+  mutate(r.checks);
+  return r;
+}
+
+test("isRetryable: transient errors retry; a disallowed URL does not", () => {
+  assert.equal(isRetryable({ errors: ["content-never-injected"], checks: {} }), true);
+  assert.equal(isRetryable({ errors: ["render-failed: net::ERR_FOO"], checks: {} }), true);
+  assert.equal(isRetryable({ errors: ["url-not-allowed"], checks: {} }), false);
+});
+
+test("isRetryable: timing-sensitive check failures are retried", () => {
+  assert.equal(isRetryable(withChecks((c) => { c.h1.present = false; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.hero.decoded = false; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.photos.decoded = 3; c.photos.undecoded = ["x"]; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.blocks.broken = ["hero(empty)"]; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.meta.hasDescription = false; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.mobile.noOverflow = false; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.productDetails.itemCount = 0; })), true);
+});
+
+test("isRetryable: price/buy/alt retry on a presence failure, skip on a content defect", () => {
+  // presence-style failures → transient → retry
+  assert.equal(isRetryable(withChecks((c) => { c.price.present = false; c.price.nonEmpty = false; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.buyLink.hasHref = false; })), true);
+  assert.equal(isRetryable(withChecks((c) => { c.altText.total = 0; })), true);
+  // rendered-but-wrong values → deterministic → skip
+  assert.equal(isRetryable(withChecks((c) => { c.price.nonZero = false; })), false); // $0.00
+  assert.equal(isRetryable(withChecks((c) => { c.buyLink.templateIdMatches = false; })), false); // wrong URL
+  assert.equal(isRetryable(withChecks((c) => { c.altText.missing = 2; c.altText.missingSrcs = ["a", "b"]; })), false);
+});
+
+test("isRetryable: pure deterministic content defects are skipped", () => {
+  assert.equal(isRetryable(withChecks((c) => { c.noPlaceholders.clean = false; c.noPlaceholders.samples = ["{{x}}"]; })), false);
+  assert.equal(isRetryable(withChecks((c) => { c.noJunk.clean = false; c.noJunk.samples = ["null"]; })), false);
+  assert.equal(isRetryable(withChecks((c) => { c.options.bad = ["null"]; })), false);
+});
+
+test("isRetryable: a transient defect alongside a deterministic one still retries", () => {
+  assert.equal(isRetryable(withChecks((c) => { c.noPlaceholders.clean = false; c.hero.decoded = false; })), true);
+});
+
+test("isRetryable: absent checks are not mistaken for transient failures", () => {
+  assert.equal(isRetryable({ errors: [], checks: { noPlaceholders: { clean: false, samples: ["{{x}}"] } } }), false);
+  assert.equal(isRetryable({ errors: [], checks: {} }), false);
+  assert.equal(isRetryable(passingResult()), false); // a passing result is never retried
 });

@@ -10,6 +10,7 @@ import {
   findPlaceholders,
   isJunkValue,
   verdicts,
+  isRetryable,
   CHECK_COLUMNS,
 } from "./checks.mjs";
 
@@ -553,11 +554,13 @@ export async function runChecks({
       }
     }
 
-    // Retry passes: re-check failures at low concurrency to recover the
-    // contention-induced false failures a fast first pass can produce.
+    // Retry passes: re-check failures to recover the contention-induced false
+    // failures a fast first pass can produce. Only retry failures that could
+    // plausibly be transient (isRetryable) — deterministic content defects fail
+    // identically on retry, so re-rendering them is wasted work.
     for (let attempt = 2; attempt <= 1 + retries; attempt++) {
       const failed = [];
-      for (let i = 0; i < total; i++) if (results[i] && !results[i].ok) failed.push(i);
+      for (let i = 0; i < total; i++) if (results[i] && !results[i].ok && isRetryable(results[i])) failed.push(i);
       if (!failed.length) break;
       await runPool(failed, retryConcurrency, attempt);
     }

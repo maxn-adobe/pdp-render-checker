@@ -53,8 +53,15 @@ asserts the expected elements are present and correctly rendered, to catch
   the **user-facing concurrency field was removed** from the UI. The Action/CLI is unchanged
   (`autoConcurrency` = min(cores, `maxConcurrency` 8), still overridable via `CONCURRENCY`).
   Validated by a regression gate (0 pass→fail vs a low-concurrency ground truth).
+- **Retry-pass trim (2026-08-20, lever #3)** — the retry pass (recovers transient failures) now runs
+  at **concurrency 4** (was serial/1; safe below the 12 cliff, ~4× faster) and **skips retrying
+  deterministic failures** via a new pure `isRetryable()` in `checks.mjs`: a placeholder leak, junk
+  token, $0.00/malformed price, wrong buy-URL, or missing-alt-on-rendered-images can't recover, so
+  re-rendering them is skipped. Conservative — anything timing-sensitive or ambiguous (title, hero,
+  images, mobile, meta, product-details, blocks) is still retried. Applies to both front-ends.
+  Validated by unit tests + a request-counting fixture E2E + a live induce-then-recover stage run.
 
-Unit tests: `npm test` (42, pure logic). Verified against live business-card PDPs.
+Unit tests: `npm test` (48, pure logic). Verified against live business-card PDPs.
 
 ## Key decisions (do not undo without reason)
 

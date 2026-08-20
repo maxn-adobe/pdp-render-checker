@@ -97,8 +97,8 @@ huge fraction of pages fail.
    2026-08-20; local app now runs a fixed 12. See "Follow-up: lever #2" below.*
 3. **Cut the serial-retry tail.** Retries run at concurrency 1 through the full
    wait chain. Retry at 2–4 instead, and **skip retrying deterministic failures**
-   (an empty Product Details accordion is not transient — re-running just burns
-   another 10 s).
+   (a placeholder leak / junk token / $0.00 price / wrong buy-URL can't recover).
+   ← *done 2026-08-20 (conservative policy). See "Follow-up: lever #3" below.*
 4. **Tighten timeouts.** The buy block’s `pageTemplateId` `getAttribute` had *no*
    explicit timeout (inherited Playwright’s 30 s — fixed by lever #1); failing
    pages still eat the full `contentInjectedMs` 20 s + `imagesMs` 15 s +
@@ -152,6 +152,40 @@ slice then measured each level, plus fresh-cold confirmation:
 stage, with retries) → **0 regressions** (no page passed at low concurrency but
 failed at 12); conc 12 produced 0 failures across every sweep/gate run.
 
-**Not done (future levers):** #3 (trim the serial-retry tail — retry at 2–4, skip
-deterministic failures), #4 (tighten failing-page timeouts), #5 (overlap the
-sequential waits). These compound on top of #1 + #2.
+**Not done (future levers):** #4 (tighten failing-page timeouts), #5 (overlap the
+sequential waits). These compound on top of #1 + #2 + #3.
+
+## Follow-up: lever #3 — trim the serial retry pass (2026-08-20)
+
+The retry pass (recovers transient contention failures) was doing two wasteful
+things: running **serially** (`retryConcurrency: 1`, calibrated to the old
+contention-prone engine) and retrying **every** failure, including deterministic
+content defects that fail identically on retry.
+
+**Changes:**
+- `config.perf.retryConcurrency: 1 → 4` — the sweep proved the engine is clean
+  through 12, so the retry pass runs ~4× faster while staying below the failure
+  cliff (still effectively contention-free; `RETRY_CONCURRENCY` overrides).
+- New pure helper **`isRetryable(result)`** (`checks.mjs`, reuses `verdicts()`);
+  the engine's retry filter skips failures it classifies as deterministic. **Policy
+  is conservative** (chosen by the user): skip retry only for *unambiguous* content
+  defects — placeholder leaks, junk tokens, bad option values, a rendered `$0.00`/
+  malformed price, a hydrated-but-wrong buy URL, missing alt on images that DID
+  render. Everything timing-sensitive **or ambiguous** is still retried: title,
+  hero, images, mobile, **meta, product-details, blocks**, and any presence/
+  hydration-style failure. Errs toward retrying — a wrong "skip" would strand a
+  recoverable false failure.
+- Applies to **both** front-ends (shared engine); the Action/CLI inherits it.
+
+**Validation:** 48 unit tests (6 new, exhaustive `isRetryable` branch coverage);
+a request-counting fixture E2E (deterministic failure requested once = retry
+skipped, ambiguous failure requested twice = retried, passing page once, final
+verdicts identical to the retry-all baseline); and a live stage run that induced transient
+failures at high concurrency and confirmed the retry@4 pass recovers them (23
+induced → 14 recovered in one pass). No-lost-recovery vs the old serial retry
+follows from the sweep — conc 4 is in the same contention-free regime as conc 1 —
+plus the fixture E2E's verdict parity.
+
+**Expected impact:** modest on a clean corpus (retry pass is small), but large on a
+broken deploy — genuine deterministic failures are no longer re-rendered, and the
+remaining (transient) retries finish ~4× faster.

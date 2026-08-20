@@ -91,6 +91,47 @@ export function verdicts(r) {
   };
 }
 
+// Should a FAILED result be re-checked by the retry pass? That pass exists to
+// recover TRANSIENT (contention/slow-render) false failures; a deterministic
+// content defect (a {{ }} leak, junk token, $0.00 price, wrong buy URL, missing
+// alt) fails identically on retry, so re-rendering the whole page is wasted.
+// Returns true if the failure could plausibly be transient (retry), false only
+// when EVERY failing signal is a deterministic content defect (skip). Errs toward
+// retrying — a wrong "skip" would strand a recoverable false failure. Each branch
+// is gated on the check having actually run (`c.<key>` present), because verdicts()
+// reports an ABSENT check (per-check selection, or an early url-not-allowed) as
+// false, and an absent check must not be mistaken for a transient failure.
+export function isRetryable(result) {
+  const errors = (result && result.errors) || [];
+  // Hard signals: an injection timeout or a render crash is transient; a
+  // disallowed URL never renders (deterministic).
+  if (errors.includes("content-never-injected")) return true;
+  if (errors.some((e) => e.startsWith("render-failed"))) return true;
+  if (errors.includes("url-not-allowed")) return false;
+
+  const c = (result && result.checks) || {};
+  const v = verdicts(result);
+  // Timing-sensitive checks — a failure here may be slow render / contention.
+  // (blocks/meta/productDetails are ambiguous: they can fail from a real defect
+  // OR from not-yet-rendered, so they're conservatively retried.)
+  if (c.h1 && !v.h1) return true;
+  if (c.hero && !v.hero) return true;
+  if (c.photos && !v.photos) return true;
+  if (c.blocks && !v.blocks) return true;
+  if (c.meta && !v.meta) return true;
+  if (c.mobile && !v.mobile) return true;
+  if (c.productDetails && !v.productDetails) return true;
+  // Partly-deterministic checks: retry only when a presence/hydration sub-field
+  // failed (the element wasn't there yet). A rendered-but-wrong value — a $0.00
+  // price, a non-Express buy URL, alt missing on images that DID render — is
+  // deterministic and not retried.
+  if (c.price && !v.price && (!c.price.present || !c.price.visible || !c.price.nonEmpty)) return true;
+  if (c.buyLink && !v.buy && (!c.buyLink.present || !c.buyLink.visible || !c.buyLink.hasHref)) return true;
+  if (c.altText && !v.altText && c.altText.total === 0) return true;
+  // Everything still failing is a deterministic content defect → skip the retry.
+  return false;
+}
+
 // Clean a raw URL blob (newline- or comma-separated) into a deduped list:
 // trim, strip trailing commas (a copy/paste artifact), drop blanks and "#"
 // comments. Shared by the CLI/Action loader and the server's input box.
